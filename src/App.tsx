@@ -8,7 +8,7 @@ import {
 import { Client, Link } from './types';
 
 // --- IMPORTANT: REPLACE WITH YOUR DEPLOYED APPS SCRIPT URL ---
-const API_URL = "https://script.google.com/macros/s/AKfycbyuY_-IG7Q5ZYHcCaUPr5nFV09SN04AYGClvlpen2_dEY4eYodEO587qI2iUgcRSfZ8Kg/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbwyX7PBcoXA5wKfAFIhGLo2bMk8h4Q17CH1uItMaFSnEws5K1RIBlcQxlKKbjE7SOpe/exec";
 
 export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -43,19 +43,19 @@ export default function App() {
     setClients(updatedClients);
 
     try {
+      // We use text/plain to avoid CORS preflight issues with Apps Script
       await fetch(API_URL, {
         method: 'POST',
         mode: 'no-cors',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action,
-          id: client.ID,
-          name: client.Name,
-          date: client.Date,
-          type: client.Type,
-          storage: client.Storage,
-          secure: client.Secure,
-          links: client.Links || { cloud: [], photos: [], videos: [] }
+          ID: client.ID,
+          Name: client.Name,
+          Date: client.Date,
+          Type: client.Type,
+          Storage: client.Storage,
+          Secure: client.Secure,
+          Links: client.Links || { cloud: [], photos: [], videos: [] }
         })
       });
     } catch (error) {
