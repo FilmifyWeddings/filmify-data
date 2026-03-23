@@ -8,7 +8,7 @@ import {
 import { Client, Link } from './types';
 
 // --- IMPORTANT: REPLACE WITH YOUR DEPLOYED APPS SCRIPT URL ---
-const API_URL = "https://script.google.com/macros/s/AKfycbwOcyf7zV-gU1UoaJSu4P_1hXTywXkRsNNBveN6oiCUwjlpnUd79vZpz1lE3IJaDzjvgg/exec";
+const API_URL = "YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
 
 export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -46,6 +46,7 @@ export default function App() {
       await fetch(API_URL, {
         method: 'POST',
         mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action,
           id: client.ID,
@@ -54,19 +55,19 @@ export default function App() {
           type: client.Type,
           storage: client.Storage,
           secure: client.Secure,
-          links: client.Links
+          links: client.Links || { cloud: [], photos: [], videos: [] }
         })
       });
     } catch (error) {
       console.error("Sync failed:", error);
       setClients(previousClients);
-      alert("Failed to sync with Google Sheets.");
     }
   };
 
   const filteredClients = useMemo(() => {
     return clients.filter(c => {
-      const matchesSearch = c.Name.toLowerCase().includes(searchQuery.toLowerCase());
+      const name = c.Name || '';
+      const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesFilter = filterType === 'All' || c.Type === filterType;
       return matchesSearch && matchesFilter;
     });
@@ -250,9 +251,11 @@ export default function App() {
 
 function ClientCard({ client, onUpdate, onDelete }: { client: Client, onUpdate: (c: Client) => void, onDelete: () => void }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalType, setModalType] = useState<'cloud' | 'photos' | 'videos'>('cloud');
 
   const LinkSection = ({ title, icon: IconComp, type }: { title: string, icon: any, type: 'cloud' | 'photos' | 'videos' }) => {
-    const links = client.Links[type] || [];
+    const links = client.Links?.[type] || [];
     return (
       <div className="mb-6 last:mb-0">
         <div className="flex items-center justify-between mb-3 px-1">
@@ -262,12 +265,8 @@ function ClientCard({ client, onUpdate, onDelete }: { client: Client, onUpdate: 
           </div>
           <button 
             onClick={() => {
-              const url = prompt("Enter URL:");
-              const title = prompt("Enter Title:");
-              if (url && title) {
-                const newLink: Link = { id: Date.now().toString(), title, url };
-                onUpdate({ ...client, Links: { ...client.Links, [type]: [...links, newLink] } });
-              }
+              setModalType(type);
+              setIsModalOpen(true);
             }}
             className="text-zinc-600 hover:text-white transition-colors"
           >
@@ -295,6 +294,36 @@ function ClientCard({ client, onUpdate, onDelete }: { client: Client, onUpdate: 
 
   return (
     <motion.div layout className={`glass p-8 rounded-[2.5rem] transition-all duration-700 relative overflow-hidden group ${client.Secure ? 'secure-glow' : ''}`}>
+      {/* Link Modal */}
+      <AnimatePresence>
+        {isModalOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsModalOpen(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="relative w-full max-w-sm glass p-8 rounded-[2rem] shadow-2xl">
+              <h3 className="text-xl font-light mb-6">Add {modalType === 'cloud' ? 'Cloud' : modalType === 'photos' ? 'Photo' : 'Video'} Link</h3>
+              <div className="space-y-4">
+                <input id={`title-${client.ID}`} placeholder="Link Title (e.g. Gallery)" className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-white transition-all" />
+                <input id={`url-${client.ID}`} placeholder="URL (https://...)" className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-white transition-all" />
+                <button 
+                  onClick={() => {
+                    const titleInput = document.getElementById(`title-${client.ID}`) as HTMLInputElement;
+                    const urlInput = document.getElementById(`url-${client.ID}`) as HTMLInputElement;
+                    if (titleInput.value && urlInput.value) {
+                      const newLink = { id: Date.now().toString(), title: titleInput.value, url: urlInput.value };
+                      const currentLinks = client.Links || { cloud: [], photos: [], videos: [] };
+                      onUpdate({ ...client, Links: { ...currentLinks, [modalType]: [...(currentLinks[modalType] || []), newLink] } });
+                      setIsModalOpen(false);
+                    }
+                  }}
+                  className="w-full py-3 bg-white text-black rounded-xl text-[10px] font-bold tracking-widest"
+                >
+                  ADD ASSET
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <div className="flex justify-between items-start mb-8">
         <div>
           <div className="flex gap-2 mb-2">
