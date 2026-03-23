@@ -8,7 +8,7 @@ import {
 import { Client, Link } from './types';
 
 // --- IMPORTANT: REPLACE WITH YOUR DEPLOYED APPS SCRIPT URL ---
-const API_URL = "YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+const API_URL = "https://script.google.com/macros/s/AKfycbwOcyf7zV-gU1UoaJSu4P_1hXTywXkRsNNBveN6oiCUwjlpnUd79vZpz1lE3IJaDzjvgg/exec";
 
 export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
