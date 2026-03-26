@@ -244,7 +244,7 @@ function App() {
 
   const filteredClients = useMemo(() => {
     return clients.filter(c => {
-      const name = c.Name || '';
+      const name = String(c.Name || '');
       return name.toLowerCase().includes(searchQuery.toLowerCase());
     });
   }, [clients, searchQuery]);
