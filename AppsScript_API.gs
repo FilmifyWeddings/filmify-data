@@ -4,7 +4,8 @@
 // 3. Deploy as Web App (Execute as: Me, Access: Anyone).
 
 // --- CONFIGURATION ---
-const TEAM_SPREADSHEET_ID = "1CiYaueyKMbNWm0m40sTbDAWLq05DLjaete8LBV3cymc";
+// We use PropertiesService so the ID can be updated from the web app UI
+const getTeamSpreadsheetId = () => PropertiesService.getScriptProperties().getProperty('TEAM_SPREADSHEET_ID') || "";
 
 function doGet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -28,9 +29,11 @@ function doGet() {
   // Fetch Team Management Data
   let teamProjects = [];
   let teamError = null;
+  const teamId = getTeamSpreadsheetId();
+  
   try {
-    if (TEAM_SPREADSHEET_ID && TEAM_SPREADSHEET_ID !== "PASTE_TEAM_MANAGEMENT_SPREADSHEET_ID_HERE") {
-      teamProjects = getTeamData();
+    if (teamId && teamId.length > 10) {
+      teamProjects = getTeamData(teamId);
       
       // Automatic Sync: Check for new projects in Team that aren't in Filmify
       const existingIds = clients.map(c => String(c.ID));
@@ -58,7 +61,7 @@ function doGet() {
         }
       });
     } else {
-      teamError = "TEAM_SPREADSHEET_ID is not set in Apps Script configuration.";
+      teamError = "Team Spreadsheet ID is not configured. Please set it in Settings.";
     }
   } catch (e) {
     teamError = "Error: " + e.toString();
@@ -68,13 +71,16 @@ function doGet() {
   return ContentService.createTextOutput(JSON.stringify({
     clients: clients,
     teamProjects: teamProjects,
-    teamError: teamError
+    teamError: teamError,
+    config: {
+      teamSpreadsheetId: teamId
+    }
   }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function getTeamData() {
-  const teamSS = SpreadsheetApp.openById(TEAM_SPREADSHEET_ID);
+function getTeamData(id) {
+  const teamSS = SpreadsheetApp.openById(id);
   const sheets = teamSS.getSheets();
   
   // Try to find sheets by name or fallback to first/second sheet
@@ -91,11 +97,22 @@ function getTeamData() {
   
   return projectRows.map(row => {
     let p = {};
-    projectHeaders.forEach((h, i) => p[h] = row[i]);
+    projectHeaders.forEach((h, i) => {
+      const header = String(h).toLowerCase();
+      if (header.includes("client") || header.includes("name")) p.ClientName = row[i];
+      if (header.includes("id")) p.ProjectID = row[i];
+      if (header.includes("date")) p.Date = row[i];
+      if (header.includes("location")) p.Location = row[i];
+    });
+    
+    // Fallback if headers didn't match
+    if (!p.ProjectID) p.ProjectID = row[0];
+    if (!p.ClientName) p.ClientName = row[1];
+    if (!p.Date) p.Date = row[2];
     
     // Add assignments for this project
     p.Team = assignments
-      .filter(a => a[0] == p.ProjectID)
+      .filter(a => String(a[0]) == String(p.ProjectID))
       .map(a => ({ name: a[1], role: a[2] }));
       
     return p;
@@ -108,7 +125,13 @@ function doPost(e) {
   const sheet = ss.getActiveSheet();
   const action = params.action;
   
-  if (action === "add") {
+  if (action === "update_config") {
+    if (params.teamSpreadsheetId) {
+      PropertiesService.getScriptProperties().setProperty('TEAM_SPREADSHEET_ID', params.teamSpreadsheetId);
+    }
+    return ContentService.createTextOutput(JSON.stringify({status: "success"}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
     sheet.appendRow([
       params.id, 
       params.name, 
