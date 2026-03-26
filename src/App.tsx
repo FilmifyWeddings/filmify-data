@@ -83,8 +83,11 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'projects' | 'settings'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'bin' | 'logs' | 'settings'>('projects');
   const [teamProjects, setTeamProjects] = useState<any[]>([]);
+  const [bin, setBin] = useState<Client[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [sortBy, setSortBy] = useState<'date' | 'type'>('date');
   const [teamError, setTeamError] = useState<string | null>(null);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
   const [appName, setAppName] = useState(() => localStorage.getItem('filmify_app_name') || 'Filmify Studio');
@@ -159,6 +162,8 @@ function App() {
       if (data && typeof data === 'object') {
         if (data.clients && Array.isArray(data.clients)) {
           setClients(data.clients);
+          setBin(Array.isArray(data.bin) ? data.bin : []);
+          setLogs(Array.isArray(data.logs) ? data.logs : []);
           setTeamProjects(Array.isArray(data.teamProjects) ? data.teamProjects : []);
           setTeamError(data.teamError || null);
           if (data.config?.teamSpreadsheetId) {
@@ -187,14 +192,23 @@ function App() {
   }, [apiUrl]);
 
   // Sync Data
-  const sync = async (action: 'add' | 'update' | 'delete', client: Client) => {
+  const sync = async (action: 'add' | 'update' | 'delete' | 'restore' | 'permanent_delete', client: Client) => {
     setIsSaving(true);
     const previousClients = [...clients];
-    const updatedClients = action === 'add' ? [client, ...clients] :
-                         action === 'delete' ? clients.filter(c => c.ID !== client.ID) :
-                         clients.map(c => c.ID === client.ID ? client : c);
-    
-    setClients(updatedClients);
+    const previousBin = [...bin];
+
+    // Optimistic UI updates
+    if (action === 'add') setClients([client, ...clients]);
+    else if (action === 'update') setClients(clients.map(c => c.ID === client.ID ? client : c));
+    else if (action === 'delete') {
+      setClients(clients.filter(c => c.ID !== client.ID));
+      setBin([{ ...client, DeletedAt: new Date().toISOString() } as any, ...bin]);
+    }
+    else if (action === 'restore') {
+      setBin(bin.filter(c => c.ID !== client.ID));
+      setClients([client, ...clients]);
+    }
+    else if (action === 'permanent_delete') setBin(bin.filter(c => c.ID !== client.ID));
 
     if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
       setTimeout(() => setIsSaving(false), 500);
@@ -202,18 +216,22 @@ function App() {
     }
 
     try {
-      // We use a robust payload that includes both uppercase and lowercase keys
-      // to ensure compatibility with various Apps Script implementations.
+      // If it's a team project not yet in clients, we need to sync it first
+      if ((client as any).isTeamProject && (action === 'update' || action === 'delete')) {
+        await fetch(apiUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({
+            action: 'sync_team',
+            id: client.ID,
+            storage: client.Storage || 'HDD 01'
+          })
+        });
+      }
+
       const payload = {
         action,
-        ID: client.ID,
-        Name: client.Name,
-        Date: client.Date,
-        Type: client.Type,
-        Storage: client.Storage,
-        Secure: client.Secure,
-        Links: client.Links || { cloud: [], photos: [], videos: [] },
-        // Lowercase versions for safety
         id: client.ID,
         name: client.Name,
         date: client.Date,
@@ -226,46 +244,59 @@ function App() {
       await fetch(apiUrl, {
         method: 'POST',
         mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain',
-        },
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(payload)
       });
+      
+      fetchData(true);
     } catch (error) {
       console.error("Sync failed:", error);
       setClients(previousClients);
+      setBin(previousBin);
     } finally {
       setTimeout(() => setIsSaving(false), 800);
     }
   };
 
   const allMergedProjects = useMemo(() => {
-    const teamMapped = teamProjects.map(tp => ({
-      ID: tp.ProjectID,
-      Name: tp.ClientName,
-      Date: tp.Date,
-      Type: tp.Type,
-      Storage: 'Team Management',
-      Secure: false,
-      Links: { cloud: [], photos: [], videos: [] },
-      Team: tp.Team,
-      Location: tp.Location,
-      isTeamProject: true
-    }));
+    // Filter out team projects that are already synced to clients
+    const existingIds = new Set(clients.map(c => String(c.ID)));
+    
+    const teamMapped = teamProjects
+      .filter(tp => !existingIds.has(String(tp.ProjectID)))
+      .map(tp => ({
+        ID: tp.ProjectID,
+        Name: tp.ClientName,
+        Date: tp.Date,
+        Type: tp.Type,
+        Storage: 'HDD 01', // Default to first HDD instead of "Team Management"
+        Secure: false,
+        Links: { cloud: [], photos: [], videos: [] },
+        isTeamProject: true
+      }));
 
-    // Merge logic: If a project ID exists in both, we can either show both or prioritize one.
-    // User wants "direct clintes mai dikhe", so we'll show all.
     return [...clients, ...teamMapped];
   }, [clients, teamProjects]);
 
   const filteredClients = useMemo(() => {
-    return allMergedProjects.filter(c => {
+    let list = allMergedProjects.filter(c => {
       const name = String(c.Name || '');
       const type = String(c.Type || '');
       const query = searchQuery.toLowerCase();
       return name.toLowerCase().includes(query) || type.toLowerCase().includes(query);
     });
-  }, [allMergedProjects, searchQuery]);
+
+    // Sorting
+    list.sort((a, b) => {
+      if (sortBy === 'date') {
+        return new Date(b.Date).getTime() - new Date(a.Date).getTime();
+      } else {
+        return (a.Type || '').localeCompare(b.Type || '');
+      }
+    });
+
+    return list;
+  }, [allMergedProjects, searchQuery, sortBy]);
 
   if (loading) return (
     <div className="h-screen flex flex-col items-center justify-center gap-4 bg-[#0a0a0a]">
@@ -307,6 +338,18 @@ function App() {
               className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'projects' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
             >
               Clients
+            </button>
+            <button 
+              onClick={() => setActiveTab('bin')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'bin' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
+            >
+              Bin
+            </button>
+            <button 
+              onClick={() => setActiveTab('logs')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'logs' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
+            >
+              Logs
             </button>
           </div>
 
@@ -362,7 +405,7 @@ function App() {
               </p>
               <div className="flex gap-3">
                 <button 
-                  onClick={fetchData}
+                  onClick={() => fetchData()}
                   className="w-fit px-6 py-2 bg-red-500 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-red-400 transition-colors"
                 >
                   Retry Connection
@@ -384,8 +427,24 @@ function App() {
                   <h2 className="text-3xl font-bold tracking-tight text-white">Active Projects</h2>
                   <p className="text-sm text-neutral-400 font-medium">Manage and track your ongoing studio work.</p>
                 </div>
-                <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
-                  {filteredClients.length} Projects
+                <div className="flex items-center gap-4">
+                  <div className="flex bg-neutral-900 p-1 rounded-xl border border-neutral-800">
+                    <button 
+                      onClick={() => setSortBy('date')}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${sortBy === 'date' ? 'bg-white text-black' : 'text-neutral-400'}`}
+                    >
+                      Date
+                    </button>
+                    <button 
+                      onClick={() => setSortBy('type')}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${sortBy === 'type' ? 'bg-white text-black' : 'text-neutral-400'}`}
+                    >
+                      Type
+                    </button>
+                  </div>
+                  <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
+                    {filteredClients.length} Projects
+                  </div>
                 </div>
               </div>
 
@@ -407,6 +466,96 @@ function App() {
                   <div className="py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
                     <Search size={32} strokeWidth={1.5} className="mb-2 opacity-20" />
                     <p className="font-medium">No projects found</p>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : activeTab === 'bin' ? (
+            <>
+              <div className="flex items-end justify-between mb-12">
+                <div className="space-y-1">
+                  <h2 className="text-3xl font-bold tracking-tight text-white">Bin</h2>
+                  <p className="text-sm text-neutral-400 font-medium">Deleted projects are stored here for 30 days.</p>
+                </div>
+                <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
+                  {bin.length} Items
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-8">
+                <AnimatePresence mode="popLayout">
+                  {bin.map(item => (
+                    <ProjectCard 
+                      key={item.ID} 
+                      client={item} 
+                      isBinItem
+                      deliveryLinkTypes={deliveryLinkTypes}
+                      storageOptions={storageOptions}
+                      onRestore={() => sync('restore', item)}
+                      onPermanentDelete={() => sync('permanent_delete', item)}
+                    />
+                  ))}
+                </AnimatePresence>
+
+                {bin.length === 0 && (
+                  <div className="py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
+                    <Trash2 size={32} strokeWidth={1.5} className="mb-2 opacity-20" />
+                    <p className="font-medium">Bin is empty</p>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : activeTab === 'logs' ? (
+            <>
+              <div className="flex items-end justify-between mb-12">
+                <div className="space-y-1">
+                  <h2 className="text-3xl font-bold tracking-tight text-white">Activity Logs</h2>
+                  <p className="text-sm text-neutral-400 font-medium">Audit trail of all actions performed in the app.</p>
+                </div>
+              </div>
+
+              <div className="bg-neutral-900 border border-neutral-800 rounded-[32px] overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-neutral-800/50 text-neutral-400 uppercase text-[10px] font-bold tracking-widest">
+                      <tr>
+                        <th className="px-6 py-4">Timestamp</th>
+                        <th className="px-6 py-4">Action</th>
+                        <th className="px-6 py-4">Details</th>
+                        <th className="px-6 py-4">User</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800">
+                      {logs.map((log, idx) => (
+                        <tr key={idx} className="hover:bg-white/5 transition-colors">
+                          <td className="px-6 py-4 text-neutral-400 whitespace-nowrap">
+                            {new Date(log.Timestamp).toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                              log.Action === 'delete' ? 'bg-red-500/10 text-red-400' :
+                              log.Action === 'add' ? 'bg-green-500/10 text-green-400' :
+                              log.Action === 'update' ? 'bg-blue-500/10 text-blue-400' :
+                              'bg-neutral-800 text-neutral-400'
+                            }`}>
+                              {log.Action}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-neutral-200 max-w-md truncate">
+                            {log.Details}
+                          </td>
+                          <td className="px-6 py-4 text-neutral-500">
+                            {log.User}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {logs.length === 0 && (
+                  <div className="py-20 flex flex-col items-center justify-center text-neutral-500">
+                    <BarChart3 size={32} strokeWidth={1.5} className="mb-2 opacity-20" />
+                    <p className="font-medium">No logs recorded yet</p>
                   </div>
                 )}
               </div>
@@ -835,9 +984,12 @@ const ProjectCard = forwardRef<HTMLDivElement, {
   client: Client, 
   deliveryLinkTypes: { id: string, title: string, color?: string }[],
   storageOptions: string[],
-  onUpdate: (c: Client) => void, 
-  onDelete: () => void 
-}>(({ client, deliveryLinkTypes, storageOptions, onUpdate, onDelete }, ref) => {
+  onUpdate?: (c: Client) => void, 
+  onDelete?: () => void,
+  isBinItem?: boolean,
+  onRestore?: () => void,
+  onPermanentDelete?: () => void
+}>(({ client, deliveryLinkTypes, storageOptions, onUpdate, onDelete, isBinItem, onRestore, onPermanentDelete }, ref) => {
   const [isAssetsOpen, setIsAssetsOpen] = useState(false);
   const [isAddLinkOpen, setIsAddLinkOpen] = useState(false);
   const [editingLink, setEditingLink] = useState<Link | null>(null);
@@ -938,48 +1090,49 @@ const ProjectCard = forwardRef<HTMLDivElement, {
               <Calendar size={16} className="text-neutral-500" />
               <span>{client.Date}</span>
             </div>
-            {(client as any).Location && (
+            {!(client as any).isTeamProject && (client as any).Location && (
               <div className="flex items-center gap-2">
                 <MapPin size={16} className="text-neutral-500" />
                 <span>{(client as any).Location}</span>
               </div>
             )}
           </div>
-          
-          {(client as any).Team && (client as any).Team.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {(client as any).Team.map((member: any, mIdx: number) => (
-                <div key={mIdx} className="px-2 py-1 bg-neutral-800/50 border border-neutral-800 rounded text-[10px] text-neutral-300">
-                  <span className="font-bold text-white">{member.name}</span> • {member.role}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
-        {/* Right Actions (Top in user request) */}
+        {/* Right Actions */}
         <div className="flex items-center gap-3">
-          {!(client as any).isTeamProject && (
+          {isBinItem ? (
             <>
               <button 
-                onClick={() => onUpdate({ ...client, Secure: !client.Secure })}
+                onClick={onRestore}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all bg-green-500 text-white border border-green-500 hover:bg-green-600 shadow-sm"
+              >
+                <RefreshCw size={18} />
+                <span>Restore</span>
+              </button>
+              <button 
+                onClick={() => { if(window.confirm("Permanently delete this project? This cannot be undone.")) onPermanentDelete?.() }}
+                className="p-3 rounded-xl border border-neutral-800 text-neutral-400 hover:text-red-500 hover:border-red-500 transition-all bg-neutral-900 shadow-sm"
+              >
+                <Trash2 size={20} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button 
+                onClick={() => onUpdate?.({ ...client, Secure: !client.Secure })}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all border ${client.Secure ? 'bg-green-500 text-white border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.4)] scale-105' : 'bg-neutral-900 text-white border-neutral-800 hover:border-neutral-100 shadow-sm'}`}
               >
                 {client.Secure ? <ShieldCheck size={18} className="animate-pulse" /> : <Shield size={18} className="text-white" />}
                 <span>{client.Secure ? 'Secured' : 'Secure'}</span>
               </button>
               <button 
-                onClick={() => { if(window.confirm("Delete project?")) onDelete() }}
+                onClick={() => { if(window.confirm("Move to bin?")) onDelete?.() }}
                 className="p-3 rounded-xl border border-neutral-800 text-neutral-400 hover:text-red-500 hover:border-red-500 transition-all bg-neutral-900 shadow-sm"
               >
                 <Trash2 size={20} />
               </button>
             </>
-          )}
-          {(client as any).isTeamProject && (
-            <div className="px-4 py-2 bg-blue-900/20 border border-blue-500/30 rounded-xl text-[10px] font-bold text-blue-400 uppercase tracking-widest">
-              Team Project
-            </div>
           )}
         </div>
       </div>
@@ -993,15 +1146,13 @@ const ProjectCard = forwardRef<HTMLDivElement, {
           </div>
           <div className="relative">
             <select 
-              disabled={(client as any).isTeamProject}
               value={client.Storage}
-              onChange={(e) => onUpdate({ ...client, Storage: e.target.value })}
-              className={`select-minimal py-1.5 px-3 pr-8 text-xs font-bold ${(client as any).isTeamProject ? 'opacity-50 cursor-not-allowed' : ''}`}
+              onChange={(e) => onUpdate?.({ ...client, Storage: e.target.value })}
+              className="select-minimal py-1.5 px-3 pr-8 text-xs font-bold"
             >
               {storageOptions.map(opt => (
                 <option key={opt} value={opt}>{opt}</option>
               ))}
-              {(client as any).isTeamProject && <option value="Team Management">Team Management</option>}
             </select>
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-white pointer-events-none" size={12} />
           </div>
@@ -1145,4 +1296,3 @@ const ProjectCard = forwardRef<HTMLDivElement, {
     </motion.div>
   );
 });
-
