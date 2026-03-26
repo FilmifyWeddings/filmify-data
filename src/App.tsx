@@ -11,7 +11,7 @@ import {
 import { Client, Link } from './types';
 
 // --- IMPORTANT: REPLACE WITH YOUR DEPLOYED APPS SCRIPT URL ---
-const API_URL = "https://script.google.com/macros/s/AKfycbyrF-MZMS5Jo5vPSksDoEO8OmLRuyZ8MJCVgXqawZlXn1qFodz3RwJO5rV-meQds8O8Qw/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbweTLSHOuNKcGRBOCVSlP0_y3k9kigFmz88TT87tQg1MtTP7j9lAK9upuCMS0catDF0rw/exec";
 
 export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
