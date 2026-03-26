@@ -1,44 +1,86 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-body {
-  @apply bg-black text-white antialiased;
-  margin: 0;
-  -webkit-tap-highlight-color: transparent;
+@layer base {
+  :root {
+    --bg: #0a0a0a;
+    --fg: #fafafa;
+    --sidebar-bg: #111111;
+    --card-bg: #171717;
+    --border: #262626;
+    --muted: #a3a3a3;
+    --accent: #ffffff;
+    --hover: #1f1f1f;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
 }
 
-.glass {
-  @apply bg-zinc-900/50 backdrop-blur-2xl border border-white/5;
-}
+@layer components {
+  .minimal-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  }
 
-.secure-glow {
-  box-shadow: 0 0 60px -10px rgba(16, 185, 129, 0.25);
-  border-color: rgba(16, 185, 129, 0.4);
+  .minimal-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    border-color: #404040;
+  }
+
+  .btn-primary {
+    @apply bg-white text-[#000000] px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-neutral-200 transition-all shadow-sm;
+  }
+
+  .btn-icon {
+    @apply p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 transition-all hover:text-neutral-100;
+  }
+
+  .input-minimal {
+    @apply w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-neutral-100 focus:ring-2 focus:ring-white/5 focus:bg-neutral-950 text-white placeholder-neutral-500 transition-all;
+  }
+
+  .select-minimal {
+    @apply bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs font-semibold outline-none cursor-pointer hover:bg-neutral-800 text-white transition-all;
+  }
+
+  .select-minimal option {
+    @apply bg-neutral-800 text-white;
+  }
+
+  /* Date picker icon color */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    @apply invert opacity-70 cursor-pointer;
+  }
+
+  input[type="date"] {
+    @apply relative;
+  }
 }
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  @apply bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors;
+  background: #d4d4d4;
+  border-radius: 10px;
 }
-
-/* 3D Card Hover Effect */
-.perspective-1000 {
-  perspective: 1000px;
-}
-
-.preserve-3d {
-  transform-style: preserve-3d;
+.dark ::-webkit-scrollbar-thumb {
+  background: #404040;
 }
