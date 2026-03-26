@@ -83,13 +83,13 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'projects' | 'bin' | 'logs' | 'settings'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'bin' | 'settings'>('projects');
   const [teamProjects, setTeamProjects] = useState<any[]>([]);
   const [bin, setBin] = useState<Client[]>([]);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [sortBy, setSortBy] = useState<'date' | 'type'>('date');
+  const [filterType, setFilterType] = useState<string>('All');
   const [teamError, setTeamError] = useState<string | null>(null);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
+  const [lastSyncTime, setLastSyncTime] = useState(0);
   const [appName, setAppName] = useState(() => localStorage.getItem('filmify_app_name') || 'Filmify Studio');
   const [storageOptions, setStorageOptions] = useState<string[]>(() => {
     const saved = localStorage.getItem('filmify_storage_options');
@@ -160,17 +160,19 @@ function App() {
       }
 
       if (data && typeof data === 'object') {
-        if (data.clients && Array.isArray(data.clients)) {
-          setClients(data.clients);
-          setBin(Array.isArray(data.bin) ? data.bin : []);
-          setLogs(Array.isArray(data.logs) ? data.logs : []);
-          setTeamProjects(Array.isArray(data.teamProjects) ? data.teamProjects : []);
-          setTeamError(data.teamError || null);
-          if (data.config?.teamSpreadsheetId) {
-            setTeamSpreadsheetId(data.config.teamSpreadsheetId);
+        // Only update if we aren't in the middle of a sync or if this is the first load
+        if (Date.now() - lastSyncTime > 3000 || isFirstLoad) {
+          if (data.clients && Array.isArray(data.clients)) {
+            setClients(data.clients);
+            setBin(Array.isArray(data.bin) ? data.bin : []);
+            setTeamProjects(Array.isArray(data.teamProjects) ? data.teamProjects : []);
+            setTeamError(data.teamError || null);
+            if (data.config?.teamSpreadsheetId) {
+              setTeamSpreadsheetId(data.config.teamSpreadsheetId);
+            }
+          } else if (Array.isArray(data)) {
+            setClients(data);
           }
-        } else if (Array.isArray(data)) {
-          setClients(data);
         }
       }
     } catch (error: any) {
@@ -194,21 +196,31 @@ function App() {
   // Sync Data
   const sync = async (action: 'add' | 'update' | 'delete' | 'restore' | 'permanent_delete', client: Client) => {
     setIsSaving(true);
+    setLastSyncTime(Date.now());
     const previousClients = [...clients];
     const previousBin = [...bin];
 
     // Optimistic UI updates
-    if (action === 'add') setClients([client, ...clients]);
-    else if (action === 'update') setClients(clients.map(c => c.ID === client.ID ? client : c));
-    else if (action === 'delete') {
+    if (action === 'add') {
+      setClients([client, ...clients]);
+    } else if (action === 'update') {
+      if (clients.some(c => c.ID === client.ID)) {
+        setClients(clients.map(c => c.ID === client.ID ? client : c));
+      } else {
+        // If it's a team project being updated/secured, add it to clients
+        setClients([client, ...clients]);
+      }
+    } else if (action === 'delete') {
       setClients(clients.filter(c => c.ID !== client.ID));
-      setBin([{ ...client, DeletedAt: new Date().toISOString() } as any, ...bin]);
-    }
-    else if (action === 'restore') {
+      // Ensure it goes to bin immediately
+      const binItem = { ...client, DeletedAt: new Date().toISOString() };
+      setBin(prev => [binItem as any, ...prev.filter(item => item.ID !== client.ID)]);
+    } else if (action === 'restore') {
       setBin(bin.filter(c => c.ID !== client.ID));
       setClients([client, ...clients]);
+    } else if (action === 'permanent_delete') {
+      setBin(bin.filter(c => c.ID !== client.ID));
     }
-    else if (action === 'permanent_delete') setBin(bin.filter(c => c.ID !== client.ID));
 
     if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
       setTimeout(() => setIsSaving(false), 500);
@@ -217,7 +229,8 @@ function App() {
 
     try {
       // If it's a team project not yet in clients, we need to sync it first
-      if ((client as any).isTeamProject && (action === 'update' || action === 'delete')) {
+      const isTeam = (client as any).isTeamProject;
+      if (isTeam && (action === 'update' || action === 'delete')) {
         await fetch(apiUrl, {
           method: 'POST',
           mode: 'no-cors',
@@ -248,13 +261,16 @@ function App() {
         body: JSON.stringify(payload)
       });
       
-      fetchData(true);
+      // Wait longer to ensure backend has finished processing
+      setTimeout(() => {
+        fetchData(true);
+      }, 2500);
     } catch (error) {
       console.error("Sync failed:", error);
       setClients(previousClients);
       setBin(previousBin);
     } finally {
-      setTimeout(() => setIsSaving(false), 800);
+      setTimeout(() => setIsSaving(false), 3000);
     }
   };
 
@@ -262,18 +278,31 @@ function App() {
     // Filter out team projects that are already synced to clients
     const existingIds = new Set(clients.map(c => String(c.ID)));
     
-    const teamMapped = teamProjects
-      .filter(tp => !existingIds.has(String(tp.ProjectID)))
-      .map(tp => ({
-        ID: tp.ProjectID,
-        Name: tp.ClientName,
-        Date: tp.Date,
-        Type: tp.Type,
-        Storage: 'HDD 01', // Default to first HDD instead of "Team Management"
-        Secure: false,
+    // Group team projects by ProjectID to handle sub-events
+    const groupedTeams: { [key: string]: any[] } = {};
+    teamProjects.forEach(tp => {
+      const key = String(tp.ProjectID);
+      if (!groupedTeams[key]) groupedTeams[key] = [];
+      groupedTeams[key].push(tp);
+    });
+
+    const teamMapped = Object.values(groupedTeams).map(events => {
+      // Priority: If any event is "Nikah", use that. Otherwise use the first one.
+      let mainEvent = events.find(e => String(e.Type).toLowerCase().includes('nikah')) || events[0];
+      
+      if (existingIds.has(String(mainEvent.ProjectID))) return null;
+
+      return {
+        ID: mainEvent.ProjectID,
+        Name: mainEvent.ClientName,
+        Date: mainEvent.Date,
+        Type: mainEvent.Type,
+        Storage: 'HDD 01',
+        Secure: mainEvent.Secure === true || mainEvent.Secure === 'TRUE' || mainEvent.Secure === 'true',
         Links: { cloud: [], photos: [], videos: [] },
         isTeamProject: true
-      }));
+      };
+    }).filter(Boolean) as Client[];
 
     return [...clients, ...teamMapped];
   }, [clients, teamProjects]);
@@ -283,20 +312,18 @@ function App() {
       const name = String(c.Name || '');
       const type = String(c.Type || '');
       const query = searchQuery.toLowerCase();
-      return name.toLowerCase().includes(query) || type.toLowerCase().includes(query);
+      
+      const matchesSearch = name.toLowerCase().includes(query) || type.toLowerCase().includes(query);
+      const matchesType = filterType === 'All' || type === filterType;
+      
+      return matchesSearch && matchesType;
     });
 
-    // Sorting
-    list.sort((a, b) => {
-      if (sortBy === 'date') {
-        return new Date(b.Date).getTime() - new Date(a.Date).getTime();
-      } else {
-        return (a.Type || '').localeCompare(b.Type || '');
-      }
-    });
+    // Default sorting: Newest first
+    list.sort((a, b) => new Date(b.Date).getTime() - new Date(a.Date).getTime());
 
     return list;
-  }, [allMergedProjects, searchQuery, sortBy]);
+  }, [allMergedProjects, searchQuery, filterType]);
 
   if (loading) return (
     <div className="h-screen flex flex-col items-center justify-center gap-4 bg-[#0a0a0a]">
@@ -344,12 +371,6 @@ function App() {
               className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'bin' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
             >
               Bin
-            </button>
-            <button 
-              onClick={() => setActiveTab('logs')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'logs' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
-            >
-              Logs
             </button>
           </div>
 
@@ -428,19 +449,18 @@ function App() {
                   <p className="text-sm text-neutral-400 font-medium">Manage and track your ongoing studio work.</p>
                 </div>
                 <div className="flex items-center gap-4">
-                  <div className="flex bg-neutral-900 p-1 rounded-xl border border-neutral-800">
-                    <button 
-                      onClick={() => setSortBy('date')}
-                      className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${sortBy === 'date' ? 'bg-white text-black' : 'text-neutral-400'}`}
+                  <div className="relative">
+                    <select 
+                      value={filterType}
+                      onChange={(e) => setFilterType(e.target.value)}
+                      className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 text-xs font-bold text-white outline-none focus:ring-2 focus:ring-white/5 appearance-none pr-10"
                     >
-                      Date
-                    </button>
-                    <button 
-                      onClick={() => setSortBy('type')}
-                      className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${sortBy === 'type' ? 'bg-white text-black' : 'text-neutral-400'}`}
-                    >
-                      Type
-                    </button>
+                      <option value="All">All Types</option>
+                      {eventTypes.map(type => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" size={14} />
                   </div>
                   <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
                     {filteredClients.length} Projects
