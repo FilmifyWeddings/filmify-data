@@ -11,7 +11,7 @@ import {
 import { Client, Link } from './types';
 
 // --- IMPORTANT: REPLACE WITH YOUR DEPLOYED APPS SCRIPT URL ---
-const API_URL = "YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+const API_URL = "https://script.google.com/macros/s/AKfycbyrF-MZMS5Jo5vPSksDoEO8OmLRuyZ8MJCVgXqawZlXn1qFodz3RwJO5rV-meQds8O8Qw/exec";
 
 export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -67,7 +67,7 @@ export default function App() {
 
   // Load Data
   const fetchData = async () => {
-    if (!API_URL || API_URL.includes("https://script.google.com/macros/s/AKfycbwyX7PBcoXA5wKfAFIhGLo2bMk8h4Q17CH1uItMaFSnEws5K1RIBlcQxlKKbjE7SOpe/exec")) {
+    if (!API_URL || API_URL.includes("YOUR_APPS_SCRIPT")) {
       setLoading(false);
       return;
     }
