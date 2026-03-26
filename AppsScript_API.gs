@@ -124,8 +124,8 @@ function getTeamData(id) {
 
     // Separate by types
     const preWeddingEvents = projectAssignments.filter(a => a.SubEvent && a.SubEvent.toLowerCase().includes("pre-wedding"));
-    const weddingEvents = projectAssignments.filter(a => a.SubEvent && a.SubEvent.toLowerCase().includes("wedding") && !a.SubEvent.toLowerCase().includes("pre"));
-    const otherEvents = projectAssignments.filter(a => a.SubEvent && !a.SubEvent.toLowerCase().includes("wedding") && !a.SubEvent.toLowerCase().includes("pre-wedding"));
+    const weddingEvents = projectAssignments.filter(a => a.SubEvent && (a.SubEvent.toLowerCase().includes("wedding") || a.SubEvent.toLowerCase().includes("nikah")) && !a.SubEvent.toLowerCase().includes("pre"));
+    const otherEvents = projectAssignments.filter(a => a.SubEvent && !a.SubEvent.toLowerCase().includes("wedding") && !a.SubEvent.toLowerCase().includes("nikah") && !a.SubEvent.toLowerCase().includes("pre-wedding"));
 
     // 1. Pre-wedding Card (Always separate if exists)
     if (preWeddingEvents.length > 0) {
@@ -141,14 +141,14 @@ function getTeamData(id) {
 
     // 2. Wedding Card (Main Event)
     if (weddingEvents.length > 0) {
-      // If Wedding exists, Haldi/Sangeet (others) are grouped into it
+      // If Wedding or Nikah exists, Haldi/Sangeet (others) are grouped into it
       const mainTeam = [...weddingEvents, ...otherEvents].map(a => ({ name: a.Person, role: a.Role })).filter(t => t.name);
       finalCards.push({
         ProjectID: pid + "_Wedding",
         ClientName: project.ClientName,
         Date: formatDate(weddingEvents[0].Date),
         Location: weddingEvents[0].Location,
-        Type: "Wedding",
+        Type: weddingEvents[0].SubEvent, // Keep original name (e.g. Nikah)
         Team: mainTeam
       });
     } 
