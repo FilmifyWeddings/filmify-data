@@ -83,9 +83,10 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'projects' | 'team' | 'settings'>('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'settings'>('projects');
   const [teamProjects, setTeamProjects] = useState<any[]>([]);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
   const [appName, setAppName] = useState(() => localStorage.getItem('filmify_app_name') || 'Filmify Studio');
   const [storageOptions, setStorageOptions] = useState<string[]>(() => {
     const saved = localStorage.getItem('filmify_storage_options');
@@ -131,12 +132,13 @@ function App() {
     localStorage.setItem('filmify_event_types', JSON.stringify(eventTypes));
   }, [eventTypes]);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
-      // Small delay to show the "Not Configured" state clearly
-      await new Promise(r => setTimeout(r, 800));
-      setLoading(false);
+      if (!isBackground) {
+        await new Promise(r => setTimeout(r, 800));
+        setLoading(false);
+      }
       return;
     }
     try {
@@ -164,30 +166,25 @@ function App() {
           }
         } else if (Array.isArray(data)) {
           setClients(data);
-        } else {
-          setClients([]);
         }
-      } else {
-        setClients([]);
       }
     } catch (error: any) {
       console.error("Failed to fetch data:", error);
-      setTeamError(error.message || "Failed to connect to Apps Script");
+      if (!isBackground) setTeamError(error.message || "Failed to connect to Apps Script");
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
+      setIsFirstLoad(false);
     }
   };
 
   useEffect(() => {
     fetchData();
-    // Auto-refresh every 60 seconds to keep data "turant"
+    // Background polling every 20 seconds for "instant" feel
     const interval = setInterval(() => {
-      if (activeTab === 'team' || activeTab === 'projects') {
-        fetchData();
-      }
-    }, 60000);
+      fetchData(true);
+    }, 20000);
     return () => clearInterval(interval);
-  }, [apiUrl, activeTab]);
+  }, [apiUrl]);
 
   // Sync Data
   const sync = async (action: 'add' | 'update' | 'delete', client: Client) => {
@@ -242,12 +239,33 @@ function App() {
     }
   };
 
+  const allMergedProjects = useMemo(() => {
+    const teamMapped = teamProjects.map(tp => ({
+      ID: tp.ProjectID,
+      Name: tp.ClientName,
+      Date: tp.Date,
+      Type: tp.Type,
+      Storage: 'Team Management',
+      Secure: false,
+      Links: { cloud: [], photos: [], videos: [] },
+      Team: tp.Team,
+      Location: tp.Location,
+      isTeamProject: true
+    }));
+
+    // Merge logic: If a project ID exists in both, we can either show both or prioritize one.
+    // User wants "direct clintes mai dikhe", so we'll show all.
+    return [...clients, ...teamMapped];
+  }, [clients, teamProjects]);
+
   const filteredClients = useMemo(() => {
-    return clients.filter(c => {
+    return allMergedProjects.filter(c => {
       const name = String(c.Name || '');
-      return name.toLowerCase().includes(searchQuery.toLowerCase());
+      const type = String(c.Type || '');
+      const query = searchQuery.toLowerCase();
+      return name.toLowerCase().includes(query) || type.toLowerCase().includes(query);
     });
-  }, [clients, searchQuery]);
+  }, [allMergedProjects, searchQuery]);
 
   if (loading) return (
     <div className="h-screen flex flex-col items-center justify-center gap-4 bg-[#0a0a0a]">
@@ -289,12 +307,6 @@ function App() {
               className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'projects' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
             >
               Clients
-            </button>
-            <button 
-              onClick={() => setActiveTab('team')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'team' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
-            >
-              Team
             </button>
           </div>
 
@@ -395,129 +407,6 @@ function App() {
                   <div className="py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
                     <Search size={32} strokeWidth={1.5} className="mb-2 opacity-20" />
                     <p className="font-medium">No projects found</p>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : activeTab === 'team' ? (
-            <>
-              <div className="flex items-end justify-between mb-12">
-                <div className="space-y-1">
-                  <h2 className="text-3xl font-bold tracking-tight text-white">Team Management</h2>
-                  <p className="text-sm text-neutral-400 font-medium">Projects synced from your Team Management app.</p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <button 
-                    onClick={fetchData}
-                    className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded-xl border border-neutral-800 transition-all text-xs font-bold"
-                  >
-                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-                    Refresh Team Data
-                  </button>
-                  <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
-                    {teamProjects.length} Team Projects
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {teamProjects.map((project, idx) => {
-                  const isSynced = clients.some(c => c.ID === project.ProjectID);
-                  return (
-                    <div key={idx} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 hover:border-neutral-700 transition-all group relative overflow-hidden">
-                      {/* Event Type Badge */}
-                      <div className="absolute top-0 right-0 px-3 py-1 bg-neutral-800 text-[10px] font-bold text-neutral-400 uppercase tracking-widest rounded-bl-xl border-l border-b border-neutral-800">
-                        {project.Type || 'Event'}
-                      </div>
-
-                      <div className="flex justify-between items-start mb-4 pr-16">
-                        <div>
-                          <h3 className="text-lg font-bold text-white leading-tight">{project.ClientName || 'Unnamed Client'}</h3>
-                          <p className="text-[10px] text-neutral-500 font-mono mt-1">{project.ProjectID || 'No ID'}</p>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-sm text-neutral-400">
-                          <Calendar size={14} className="text-neutral-600" />
-                          <span className="font-medium">{project.Date || 'No date'}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-neutral-400">
-                          <MapPin size={14} className="text-neutral-600" />
-                          <span className="font-medium truncate">{project.Location || 'No location set'}</span>
-                        </div>
-                        
-                        <div className="pt-4 border-t border-neutral-800">
-                          <div className="flex items-center justify-between mb-2">
-                            <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Team Assignments</p>
-                            <button 
-                              disabled={isSynced || isSaving}
-                              onClick={async () => {
-                                if (isSynced) return;
-                                setIsSaving(true);
-                                try {
-                                  await fetch(apiUrl, {
-                                    method: 'POST',
-                                    mode: 'no-cors',
-                                    body: JSON.stringify({ action: 'sync_team', project })
-                                  });
-                                  // We can't know for sure if it succeeded due to no-cors, 
-                                  // but we'll refresh after a short delay
-                                  setTimeout(fetchData, 1000);
-                                } catch (e) {
-                                  console.error(e);
-                                } finally {
-                                  setIsSaving(false);
-                                }
-                              }}
-                              className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${
-                                isSynced 
-                                  ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed' 
-                                  : 'bg-white text-black hover:bg-neutral-200 active:scale-95'
-                              }`}
-                            >
-                              {isSynced ? 'Synced' : 'Sync to Filmify'}
-                            </button>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {project.Team && project.Team.length > 0 ? project.Team.map((member: any, mIdx: number) => (
-                              <div key={mIdx} className="px-2 py-1 bg-neutral-800/50 border border-neutral-800 rounded text-[10px] text-neutral-300">
-                                <span className="font-bold text-white">{member.name}</span> • {member.role}
-                              </div>
-                            )) : (
-                              <p className="text-[10px] text-neutral-600 italic">No team assigned</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {teamProjects.length === 0 && (
-                  <div className="col-span-full py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
-                    {loading ? (
-                      <>
-                        <Loader2 size={32} className="mb-2 animate-spin opacity-20" />
-                        <p className="font-medium">Fetching team data...</p>
-                      </>
-                    ) : (
-                      <>
-                        <AlertCircle size={32} className="mb-2 opacity-20" />
-                        <p className="font-medium">{teamError || "No team projects found"}</p>
-                        {teamError && (
-                          <p className="text-[10px] text-neutral-600 mt-2 max-w-xs text-center">
-                            Check if TEAM_SPREADSHEET_ID is correct and you have authorized the script.
-                          </p>
-                        )}
-                        <button 
-                          onClick={fetchData}
-                          className="mt-4 flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-bold transition-all"
-                        >
-                          <RefreshCw size={14} />
-                          Retry Fetch
-                        </button>
-                      </>
-                    )}
                   </div>
                 )}
               </div>
@@ -1039,34 +928,59 @@ const ProjectCard = forwardRef<HTMLDivElement, {
         {/* Left Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-4 mb-2">
-            <h3 className={`text-xl font-bold truncate transition-colors ${client.Secure ? 'text-green-400' : 'text-white'}`}>{client.Name}</h3>
-            <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors ${client.Secure ? 'bg-green-900/40 text-green-400' : 'bg-neutral-800 text-neutral-400 border border-neutral-800'}`}>
+            <h3 className={`text-xl font-bold truncate transition-colors ${(client as any).isTeamProject ? 'text-blue-400' : client.Secure ? 'text-green-400' : 'text-white'}`}>{client.Name}</h3>
+            <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-colors ${(client as any).isTeamProject ? 'bg-blue-900/40 text-blue-400' : client.Secure ? 'bg-green-900/40 text-green-400' : 'bg-neutral-800 text-neutral-400 border border-neutral-800'}`}>
               {client.Type}
             </span>
           </div>
-          <div className="flex items-center gap-6 text-neutral-300 text-sm font-medium">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-neutral-300 text-sm font-medium">
             <div className="flex items-center gap-2">
               <Calendar size={16} className="text-neutral-500" />
-              <span>Created: {client.Date}</span>
+              <span>{client.Date}</span>
             </div>
+            {(client as any).Location && (
+              <div className="flex items-center gap-2">
+                <MapPin size={16} className="text-neutral-500" />
+                <span>{(client as any).Location}</span>
+              </div>
+            )}
           </div>
+          
+          {(client as any).Team && (client as any).Team.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {(client as any).Team.map((member: any, mIdx: number) => (
+                <div key={mIdx} className="px-2 py-1 bg-neutral-800/50 border border-neutral-800 rounded text-[10px] text-neutral-300">
+                  <span className="font-bold text-white">{member.name}</span> • {member.role}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Right Actions (Top in user request) */}
         <div className="flex items-center gap-3">
-          <button 
-            onClick={() => onUpdate({ ...client, Secure: !client.Secure })}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all border ${client.Secure ? 'bg-green-500 text-white border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.4)] scale-105' : 'bg-neutral-900 text-white border-neutral-800 hover:border-neutral-100 shadow-sm'}`}
-          >
-            {client.Secure ? <ShieldCheck size={18} className="animate-pulse" /> : <Shield size={18} className="text-white" />}
-            <span>{client.Secure ? 'Secured' : 'Secure'}</span>
-          </button>
-          <button 
-            onClick={() => { if(window.confirm("Delete project?")) onDelete() }}
-            className="p-3 rounded-xl border border-neutral-800 text-neutral-400 hover:text-red-500 hover:border-red-500 transition-all bg-neutral-900 shadow-sm"
-          >
-            <Trash2 size={20} />
-          </button>
+          {!(client as any).isTeamProject && (
+            <>
+              <button 
+                onClick={() => onUpdate({ ...client, Secure: !client.Secure })}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all border ${client.Secure ? 'bg-green-500 text-white border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.4)] scale-105' : 'bg-neutral-900 text-white border-neutral-800 hover:border-neutral-100 shadow-sm'}`}
+              >
+                {client.Secure ? <ShieldCheck size={18} className="animate-pulse" /> : <Shield size={18} className="text-white" />}
+                <span>{client.Secure ? 'Secured' : 'Secure'}</span>
+              </button>
+              <button 
+                onClick={() => { if(window.confirm("Delete project?")) onDelete() }}
+                className="p-3 rounded-xl border border-neutral-800 text-neutral-400 hover:text-red-500 hover:border-red-500 transition-all bg-neutral-900 shadow-sm"
+              >
+                <Trash2 size={20} />
+              </button>
+            </>
+          )}
+          {(client as any).isTeamProject && (
+            <div className="px-4 py-2 bg-blue-900/20 border border-blue-500/30 rounded-xl text-[10px] font-bold text-blue-400 uppercase tracking-widest">
+              Team Project
+            </div>
+          )}
         </div>
       </div>
 
@@ -1079,13 +993,15 @@ const ProjectCard = forwardRef<HTMLDivElement, {
           </div>
           <div className="relative">
             <select 
+              disabled={(client as any).isTeamProject}
               value={client.Storage}
               onChange={(e) => onUpdate({ ...client, Storage: e.target.value })}
-              className="select-minimal py-1.5 px-3 pr-8 text-xs font-bold"
+              className={`select-minimal py-1.5 px-3 pr-8 text-xs font-bold ${(client as any).isTeamProject ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {storageOptions.map(opt => (
                 <option key={opt} value={opt}>{opt}</option>
               ))}
+              {(client as any).isTeamProject && <option value="Team Management">Team Management</option>}
             </select>
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-white pointer-events-none" size={12} />
           </div>
