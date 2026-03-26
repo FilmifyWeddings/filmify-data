@@ -11,9 +11,11 @@ import {
 import { Client, Link } from './types';
 
 // --- IMPORTANT: REPLACE WITH YOUR DEPLOYED APPS SCRIPT URL ---
-const API_URL = "https://script.google.com/macros/s/AKfycbwQ59N2B9LG-3OSAE4X7cLYFceXC0srNqaG84GhqgmczykW02PKfEcXMU3peLrXrb0tCw/exec";
+const DEFAULT_API_URL = "YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
 
 export default function App() {
+  const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('filmify_api_url') || DEFAULT_API_URL);
+  const [teamSpreadsheetId, setTeamSpreadsheetId] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -69,19 +71,22 @@ export default function App() {
 
   const fetchData = async () => {
     setLoading(true);
-    if (!API_URL || API_URL.includes("YOUR_APPS_SCRIPT")) {
+    if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
       // Small delay to show the "Not Configured" state clearly
       await new Promise(r => setTimeout(r, 800));
       setLoading(false);
       return;
     }
     try {
-      const response = await fetch(API_URL);
+      const response = await fetch(apiUrl);
       const data = await response.json();
       if (data.clients) {
         setClients(data.clients);
         setTeamProjects(data.teamProjects || []);
         setTeamError(data.teamError || null);
+        if (data.config?.teamSpreadsheetId) {
+          setTeamSpreadsheetId(data.config.teamSpreadsheetId);
+        }
       } else {
         setClients(Array.isArray(data) ? data : []);
       }
@@ -94,7 +99,14 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+    // Auto-refresh every 60 seconds to keep data "turant"
+    const interval = setInterval(() => {
+      if (activeTab === 'team' || activeTab === 'projects') {
+        fetchData();
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [apiUrl, activeTab]);
 
   // Sync Data
   const sync = async (action: 'add' | 'update' | 'delete', client: Client) => {
@@ -106,7 +118,7 @@ export default function App() {
     
     setClients(updatedClients);
 
-    if (!API_URL || API_URL.includes("YOUR_APPS_SCRIPT")) {
+    if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
       setTimeout(() => setIsSaving(false), 500);
       return;
     }
@@ -133,7 +145,7 @@ export default function App() {
         links: client.Links || { cloud: [], photos: [], videos: [] }
       };
 
-      await fetch(API_URL, {
+      await fetch(apiUrl, {
         method: 'POST',
         mode: 'no-cors',
         headers: {
@@ -229,11 +241,11 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-10 lg:p-16">
         <div className="max-w-6xl mx-auto">
-          {(!API_URL || API_URL.includes("YOUR_APPS_SCRIPT")) && (
+          {(!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) && (
             <div className="mb-8 p-4 bg-amber-900/20 border border-amber-500/50 rounded-xl flex items-center gap-3 text-amber-200 text-sm">
               <AlertCircle size={18} />
               <p>
-                <strong>Configuration Required:</strong> Please update the <code>API_URL</code> in <code>App.tsx</code> with your deployed Apps Script URL.
+                <strong>Configuration Required:</strong> Please go to <strong>Settings</strong> and paste your <strong>Apps Script URL</strong>.
               </p>
             </div>
           )}
@@ -310,7 +322,7 @@ export default function App() {
                           }
                           setIsSaving(true);
                           try {
-                            await fetch(API_URL, {
+                            await fetch(apiUrl, {
                               method: 'POST',
                               mode: 'no-cors',
                               body: JSON.stringify({ action: 'sync_team', project })
@@ -390,6 +402,70 @@ export default function App() {
               </div>
               
               <div className="space-y-16">
+                {/* Connection Settings */}
+                <div className="space-y-8 p-8 bg-neutral-900 border border-neutral-800 rounded-[32px]">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white/5 rounded-lg">
+                      <ExternalLink size={20} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-white">Connection Settings</h3>
+                      <p className="text-xs text-neutral-500">Connect your Google Sheets backend.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Filmify Apps Script URL</label>
+                      <input 
+                        value={apiUrl}
+                        onChange={(e) => {
+                          setApiUrl(e.target.value);
+                          localStorage.setItem('filmify_api_url', e.target.value);
+                        }}
+                        placeholder="https://script.google.com/macros/s/.../exec"
+                        className="input-minimal text-xs font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Team Management Sheet ID</label>
+                      <div className="flex gap-2">
+                        <input 
+                          value={teamSpreadsheetId}
+                          onChange={(e) => setTeamSpreadsheetId(e.target.value)}
+                          placeholder="Spreadsheet ID from URL"
+                          className="input-minimal text-xs font-mono"
+                        />
+                        <button 
+                          onClick={async () => {
+                            if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
+                              alert("Please set the Apps Script URL first!");
+                              return;
+                            }
+                            setIsSaving(true);
+                            try {
+                              await fetch(apiUrl, {
+                                method: 'POST',
+                                mode: 'no-cors',
+                                body: JSON.stringify({ action: 'update_config', teamSpreadsheetId })
+                              });
+                              alert("Team ID updated successfully!");
+                              fetchData();
+                            } catch (e) {
+                              alert("Failed to update Team ID.");
+                            } finally {
+                              setIsSaving(false);
+                            }
+                          }}
+                          className="px-4 py-2 bg-white text-black rounded-lg text-[10px] font-bold uppercase tracking-wider"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* App Name */}
                 <div className="space-y-4 max-w-md">
                   <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Studio Name</label>
