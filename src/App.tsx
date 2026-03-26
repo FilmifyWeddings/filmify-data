@@ -1145,3 +1145,4 @@ const ProjectCard = forwardRef<HTMLDivElement, {
     </motion.div>
   );
 });
+
