@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, forwardRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, Trash2, Loader2, Cloud, Image as ImageIcon, 
-  Video, ChevronDown, ChevronUp, Shield, ShieldCheck, Search,
+  Video, ChevronDown, ChevronUp, Shield, ShieldCheck, Search, MapPin,
   ExternalLink, X, Moon, Sun, LayoutGrid, Calendar, 
   Settings, Users, Briefcase, BarChart3, LogOut, Bell,
   CheckCircle2, Clock, AlertCircle, Camera, RefreshCw,
@@ -19,7 +19,8 @@ export default function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState('projects');
+  const [activeTab, setActiveTab] = useState<'projects' | 'team' | 'settings'>('projects');
+  const [teamProjects, setTeamProjects] = useState<any[]>([]);
   const [appName, setAppName] = useState(() => localStorage.getItem('filmify_app_name') || 'Filmify Studio');
   const [storageOptions, setStorageOptions] = useState<string[]>(() => {
     const saved = localStorage.getItem('filmify_storage_options');
@@ -65,7 +66,6 @@ export default function App() {
     localStorage.setItem('filmify_event_types', JSON.stringify(eventTypes));
   }, [eventTypes]);
 
-  // Load Data
   const fetchData = async () => {
     if (!API_URL || API_URL.includes("YOUR_APPS_SCRIPT")) {
       setLoading(false);
@@ -75,7 +75,12 @@ export default function App() {
     try {
       const response = await fetch(API_URL);
       const data = await response.json();
-      setClients(Array.isArray(data) ? data : []);
+      if (data.clients) {
+        setClients(data.clients);
+        setTeamProjects(data.teamProjects || []);
+      } else {
+        setClients(Array.isArray(data) ? data : []);
+      }
     } catch (error) {
       console.error("Failed to fetch data:", error);
     } finally {
@@ -103,19 +108,34 @@ export default function App() {
     }
 
     try {
+      // We use a robust payload that includes both uppercase and lowercase keys
+      // to ensure compatibility with various Apps Script implementations.
+      const payload = {
+        action,
+        ID: client.ID,
+        Name: client.Name,
+        Date: client.Date,
+        Type: client.Type,
+        Storage: client.Storage,
+        Secure: client.Secure,
+        Links: client.Links || { cloud: [], photos: [], videos: [] },
+        // Lowercase versions for safety
+        id: client.ID,
+        name: client.Name,
+        date: client.Date,
+        type: client.Type,
+        storage: client.Storage,
+        secure: client.Secure,
+        links: client.Links || { cloud: [], photos: [], videos: [] }
+      };
+
       await fetch(API_URL, {
         method: 'POST',
         mode: 'no-cors',
-        body: JSON.stringify({
-          action,
-          ID: client.ID,
-          Name: client.Name,
-          Date: client.Date,
-          Type: client.Type,
-          Storage: client.Storage,
-          Secure: client.Secure,
-          Links: client.Links || {}
-        })
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: JSON.stringify(payload)
       });
     } catch (error) {
       console.error("Sync failed:", error);
@@ -166,6 +186,21 @@ export default function App() {
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          <div className="flex bg-neutral-900 p-1 rounded-xl border border-neutral-800 mr-2">
+            <button 
+              onClick={() => setActiveTab('projects')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'projects' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
+            >
+              Clients
+            </button>
+            <button 
+              onClick={() => setActiveTab('team')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'team' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'}`}
+            >
+              Team
+            </button>
+          </div>
+
           {isSaving && (
             <div className="hidden xl:flex items-center gap-1.5 text-[10px] font-bold text-neutral-400 uppercase tracking-widest mr-2">
               <RefreshCw size={10} className="animate-spin" />
@@ -220,6 +255,86 @@ export default function App() {
                   <div className="py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
                     <Search size={32} strokeWidth={1.5} className="mb-2 opacity-20" />
                     <p className="font-medium">No projects found</p>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : activeTab === 'team' ? (
+            <>
+              <div className="flex items-end justify-between mb-12">
+                <div className="space-y-1">
+                  <h2 className="text-3xl font-bold tracking-tight text-white">Team Management</h2>
+                  <p className="text-sm text-neutral-400 font-medium">Projects synced from your Team Management app.</p>
+                </div>
+                <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
+                  {teamProjects.length} Team Projects
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {teamProjects.map((project, idx) => (
+                  <div key={idx} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 hover:border-neutral-700 transition-all group">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="text-lg font-bold text-white">{project.ClientName}</h3>
+                        <p className="text-xs text-neutral-500 font-mono">{project.ProjectID}</p>
+                      </div>
+                      <button 
+                        onClick={async () => {
+                          const exists = clients.some(c => c.ID === project.ProjectID);
+                          if (exists) {
+                            alert("This project is already in Filmify!");
+                            return;
+                          }
+                          setIsSaving(true);
+                          try {
+                            await fetch(API_URL, {
+                              method: 'POST',
+                              mode: 'no-cors',
+                              body: JSON.stringify({ action: 'sync_team', project })
+                            });
+                            fetchData(); // Refresh
+                          } catch (e) {
+                            console.error(e);
+                          } finally {
+                            setIsSaving(false);
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-white text-black text-[10px] font-bold uppercase tracking-wider rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        Sync to Filmify
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-sm text-neutral-400">
+                        <Calendar size={14} />
+                        <span>{project.Date}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm text-neutral-400">
+                        <MapPin size={14} />
+                        <span>{project.Location || 'No location set'}</span>
+                      </div>
+                      
+                      <div className="pt-4 border-t border-neutral-800">
+                        <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2">Team Assignments</p>
+                        <div className="flex flex-wrap gap-2">
+                          {project.Team && project.Team.length > 0 ? project.Team.map((member: any, mIdx: number) => (
+                            <div key={mIdx} className="px-2 py-1 bg-neutral-800 rounded text-[10px] text-neutral-300">
+                              <span className="font-bold">{member.name}</span> • {member.role}
+                            </div>
+                          )) : (
+                            <p className="text-[10px] text-neutral-600 italic">No team assigned</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {teamProjects.length === 0 && (
+                  <div className="col-span-full py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
+                    <Loader2 size={32} className="mb-2 animate-spin opacity-20" />
+                    <p className="font-medium">Fetching team data...</p>
                   </div>
                 )}
               </div>
