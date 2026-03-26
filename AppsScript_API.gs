@@ -92,13 +92,12 @@ function getTeamData(id) {
     projectHeaders.forEach((h, i) => {
       const header = String(h).toLowerCase();
       if (header.includes("client") || header.includes("name")) p.ClientName = String(row[i] || "");
-      if (header.includes("id")) p.ProjectID = String(row[i] || "");
+      if (header.includes("projectid")) p.ProjectID = String(row[i] || "");
     });
     if (p.ProjectID) projectsMap[p.ProjectID] = p;
   });
 
   // Process Assignments into cards
-  // Group assignments by ProjectID
   const groupedAssignments = {};
   assignmentsRows.forEach(row => {
     let a = {};
@@ -126,9 +125,9 @@ function getTeamData(id) {
     // Separate by types
     const preWeddingEvents = projectAssignments.filter(a => a.SubEvent && a.SubEvent.toLowerCase().includes("pre-wedding"));
     const weddingEvents = projectAssignments.filter(a => a.SubEvent && a.SubEvent.toLowerCase().includes("wedding") && !a.SubEvent.toLowerCase().includes("pre"));
-    const otherEvents = projectAssignments.filter(a => a.SubEvent && !a.SubEvent.toLowerCase().includes("wedding"));
+    const otherEvents = projectAssignments.filter(a => a.SubEvent && !a.SubEvent.toLowerCase().includes("wedding") && !a.SubEvent.toLowerCase().includes("pre-wedding"));
 
-    // 1. Pre-wedding Card
+    // 1. Pre-wedding Card (Always separate if exists)
     if (preWeddingEvents.length > 0) {
       finalCards.push({
         ProjectID: pid + "_PreWedding",
@@ -141,9 +140,8 @@ function getTeamData(id) {
     }
 
     // 2. Wedding Card (Main Event)
-    // If Wedding exists, it takes priority and includes Haldi, Sangeet etc. if they exist
     if (weddingEvents.length > 0) {
-      // Combine wedding and "others" if wedding exists
+      // If Wedding exists, Haldi/Sangeet (others) are grouped into it
       const mainTeam = [...weddingEvents, ...otherEvents].map(a => ({ name: a.Person, role: a.Role })).filter(t => t.name);
       finalCards.push({
         ProjectID: pid + "_Wedding",
