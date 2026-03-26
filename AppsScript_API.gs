@@ -16,6 +16,12 @@ function doGet() {
   const clients = rows.map(row => {
     let obj = {};
     headers.forEach((header, i) => obj[header] = row[i]);
+    
+    // Ensure Name is a string
+    if (obj.Name !== undefined && obj.Name !== null) {
+      obj.Name = String(obj.Name);
+    }
+    
     if (obj.Links) {
       try {
         obj.Links = JSON.parse(obj.Links);
@@ -36,28 +42,13 @@ function doGet() {
       teamProjects = getTeamData(teamId);
       
       // Automatic Sync: Check for new projects in Team that aren't in Filmify
+      // We use the unique ID (ProjectID + SubEvent)
       const existingIds = clients.map(c => String(c.ID));
       teamProjects.forEach(p => {
         if (!existingIds.includes(String(p.ProjectID))) {
-          sheet.appendRow([
-            p.ProjectID,
-            p.ClientName,
-            p.Date,
-            "Wedding", // Default type
-            "HDD 01", // Default storage
-            false,
-            JSON.stringify({ cloud: [], photos: [], videos: [] })
-          ]);
-          // Add to local clients array so it shows up immediately
-          clients.push({
-            ID: p.ProjectID,
-            Name: p.ClientName,
-            Date: p.Date,
-            Type: "Wedding",
-            Storage: "HDD 01",
-            Secure: false,
-            Links: { cloud: [], photos: [], videos: [] }
-          });
+          // We don't auto-sync everything anymore to avoid clutter, 
+          // but we keep the teamProjects array for the "Team" tab.
+          // The user can manually sync from the "Team" tab.
         }
       });
     } else {
@@ -83,7 +74,6 @@ function getTeamData(id) {
   const teamSS = SpreadsheetApp.openById(id);
   const sheets = teamSS.getSheets();
   
-  // Try to find sheets by name or fallback to first/second sheet
   const projectSheet = teamSS.getSheetByName("Projects") || sheets.find(s => s.getName().toLowerCase().includes("project")) || sheets[0];
   const assignmentSheet = teamSS.getSheetByName("Assignments") || sheets.find(s => s.getName().toLowerCase().includes("assign")) || sheets[1];
   
@@ -92,31 +82,110 @@ function getTeamData(id) {
   const projectRows = projectSheet.getDataRange().getValues();
   const projectHeaders = projectRows.shift();
   
-  const assignments = assignmentSheet ? assignmentSheet.getDataRange().getValues() : [];
-  if (assignments.length > 0) assignments.shift(); // remove headers
+  const assignmentsRows = assignmentSheet ? assignmentSheet.getDataRange().getValues() : [];
+  const assignmentHeaders = assignmentsRows.length > 0 ? assignmentsRows.shift() : [];
   
-  return projectRows.map(row => {
+  // Map projects for easy lookup
+  const projectsMap = {};
+  projectRows.forEach(row => {
     let p = {};
     projectHeaders.forEach((h, i) => {
       const header = String(h).toLowerCase();
-      if (header.includes("client") || header.includes("name")) p.ClientName = row[i];
-      if (header.includes("id")) p.ProjectID = row[i];
-      if (header.includes("date")) p.Date = row[i];
-      if (header.includes("location")) p.Location = row[i];
+      if (header.includes("client") || header.includes("name")) p.ClientName = String(row[i] || "");
+      if (header.includes("id")) p.ProjectID = String(row[i] || "");
     });
-    
-    // Fallback if headers didn't match
-    if (!p.ProjectID) p.ProjectID = row[0];
-    if (!p.ClientName) p.ClientName = row[1];
-    if (!p.Date) p.Date = row[2];
-    
-    // Add assignments for this project
-    p.Team = assignments
-      .filter(a => String(a[0]) == String(p.ProjectID))
-      .map(a => ({ name: a[1], role: a[2] }));
-      
-    return p;
+    if (p.ProjectID) projectsMap[p.ProjectID] = p;
   });
+
+  // Process Assignments into cards
+  // Group assignments by ProjectID
+  const groupedAssignments = {};
+  assignmentsRows.forEach(row => {
+    let a = {};
+    assignmentHeaders.forEach((h, i) => {
+      const header = String(h).toLowerCase();
+      if (header.includes("projectid")) a.ProjectID = String(row[i] || "");
+      if (header.includes("subevent") && !header.includes("date") && !header.includes("location") && !header.includes("note")) a.SubEvent = String(row[i] || "");
+      if (header.includes("subeventdate")) a.Date = row[i];
+      if (header.includes("subeventlocation")) a.Location = row[i];
+      if (header.includes("assignedperson")) a.Person = String(row[i] || "");
+      if (header.includes("requiredrole")) a.Role = String(row[i] || "");
+    });
+
+    if (!a.ProjectID) return;
+    if (!groupedAssignments[a.ProjectID]) groupedAssignments[a.ProjectID] = [];
+    groupedAssignments[a.ProjectID].push(a);
+  });
+
+  const finalCards = [];
+
+  Object.keys(groupedAssignments).forEach(pid => {
+    const project = projectsMap[pid] || { ClientName: "Unknown Client", ProjectID: pid };
+    const projectAssignments = groupedAssignments[pid];
+
+    // Separate by types
+    const preWeddingEvents = projectAssignments.filter(a => a.SubEvent && a.SubEvent.toLowerCase().includes("pre-wedding"));
+    const weddingEvents = projectAssignments.filter(a => a.SubEvent && a.SubEvent.toLowerCase().includes("wedding") && !a.SubEvent.toLowerCase().includes("pre"));
+    const otherEvents = projectAssignments.filter(a => a.SubEvent && !a.SubEvent.toLowerCase().includes("wedding"));
+
+    // 1. Pre-wedding Card
+    if (preWeddingEvents.length > 0) {
+      finalCards.push({
+        ProjectID: pid + "_PreWedding",
+        ClientName: project.ClientName,
+        Date: formatDate(preWeddingEvents[0].Date),
+        Location: preWeddingEvents[0].Location,
+        Type: "Pre-wedding",
+        Team: preWeddingEvents.map(a => ({ name: a.Person, role: a.Role })).filter(t => t.name)
+      });
+    }
+
+    // 2. Wedding Card (Main Event)
+    // If Wedding exists, it takes priority and includes Haldi, Sangeet etc. if they exist
+    if (weddingEvents.length > 0) {
+      // Combine wedding and "others" if wedding exists
+      const mainTeam = [...weddingEvents, ...otherEvents].map(a => ({ name: a.Person, role: a.Role })).filter(t => t.name);
+      finalCards.push({
+        ProjectID: pid + "_Wedding",
+        ClientName: project.ClientName,
+        Date: formatDate(weddingEvents[0].Date),
+        Location: weddingEvents[0].Location,
+        Type: "Wedding",
+        Team: mainTeam
+      });
+    } 
+    // 3. Other Events (Only if no Wedding exists)
+    else if (otherEvents.length > 0) {
+      // Group others by SubEvent type
+      const subEventGroups = {};
+      otherEvents.forEach(a => {
+        if (!subEventGroups[a.SubEvent]) subEventGroups[a.SubEvent] = [];
+        subEventGroups[a.SubEvent].push(a);
+      });
+
+      Object.keys(subEventGroups).forEach(subType => {
+        const events = subEventGroups[subType];
+        finalCards.push({
+          ProjectID: pid + "_" + subType.replace(/\s+/g, ''),
+          ClientName: project.ClientName,
+          Date: formatDate(events[0].Date),
+          Location: events[0].Location,
+          Type: subType,
+          Team: events.map(a => ({ name: a.Person, role: a.Role })).filter(t => t.name)
+        });
+      });
+    }
+  });
+
+  return finalCards;
+}
+
+function formatDate(date) {
+  if (!date) return "";
+  if (date instanceof Date) {
+    return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+  return String(date);
 }
 
 function doPost(e) {
@@ -168,7 +237,7 @@ function doPost(e) {
       project.ProjectID,
       project.ClientName,
       project.Date,
-      "Wedding", // Default type
+      project.Type || "Wedding", 
       "HDD 01", // Default storage
       false,
       JSON.stringify({ cloud: [], photos: [], videos: [] })
