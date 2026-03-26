@@ -421,65 +421,78 @@ function App() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {teamProjects.map((project, idx) => (
-                  <div key={idx} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 hover:border-neutral-700 transition-all group">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="text-lg font-bold text-white">{project.ClientName || 'Unnamed Client'}</h3>
-                        <p className="text-xs text-neutral-500 font-mono">{project.ProjectID || 'No ID'}</p>
+                {teamProjects.map((project, idx) => {
+                  const isSynced = clients.some(c => c.ID === project.ProjectID);
+                  return (
+                    <div key={idx} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 hover:border-neutral-700 transition-all group relative overflow-hidden">
+                      {/* Event Type Badge */}
+                      <div className="absolute top-0 right-0 px-3 py-1 bg-neutral-800 text-[10px] font-bold text-neutral-400 uppercase tracking-widest rounded-bl-xl border-l border-b border-neutral-800">
+                        {project.Type || 'Event'}
                       </div>
-                      <button 
-                        onClick={async () => {
-                          const exists = clients.some(c => c.ID === project.ProjectID);
-                          if (exists) {
-                            alert("This project is already in Filmify!");
-                            return;
-                          }
-                          setIsSaving(true);
-                          try {
-                            await fetch(apiUrl, {
-                              method: 'POST',
-                              mode: 'no-cors',
-                              body: JSON.stringify({ action: 'sync_team', project })
-                            });
-                            fetchData(); // Refresh
-                          } catch (e) {
-                            console.error(e);
-                          } finally {
-                            setIsSaving(false);
-                          }
-                        }}
-                        className="px-3 py-1.5 bg-white text-black text-[10px] font-bold uppercase tracking-wider rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        Sync to Filmify
-                      </button>
-                    </div>
-                    
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-sm text-neutral-400">
-                        <Calendar size={14} />
-                        <span>{project.Date || 'No date'}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm text-neutral-400">
-                        <MapPin size={14} />
-                        <span>{project.Location || 'No location set'}</span>
+
+                      <div className="flex justify-between items-start mb-4 pr-16">
+                        <div>
+                          <h3 className="text-lg font-bold text-white leading-tight">{project.ClientName || 'Unnamed Client'}</h3>
+                          <p className="text-[10px] text-neutral-500 font-mono mt-1">{project.ProjectID || 'No ID'}</p>
+                        </div>
                       </div>
                       
-                      <div className="pt-4 border-t border-neutral-800">
-                        <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2">Team Assignments</p>
-                        <div className="flex flex-wrap gap-2">
-                          {project.Team && project.Team.length > 0 ? project.Team.map((member: any, mIdx: number) => (
-                            <div key={mIdx} className="px-2 py-1 bg-neutral-800 rounded text-[10px] text-neutral-300">
-                              <span className="font-bold">{member.name}</span> • {member.role}
-                            </div>
-                          )) : (
-                            <p className="text-[10px] text-neutral-600 italic">No team assigned</p>
-                          )}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-sm text-neutral-400">
+                          <Calendar size={14} className="text-neutral-600" />
+                          <span className="font-medium">{project.Date || 'No date'}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-neutral-400">
+                          <MapPin size={14} className="text-neutral-600" />
+                          <span className="font-medium truncate">{project.Location || 'No location set'}</span>
+                        </div>
+                        
+                        <div className="pt-4 border-t border-neutral-800">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest">Team Assignments</p>
+                            <button 
+                              disabled={isSynced || isSaving}
+                              onClick={async () => {
+                                if (isSynced) return;
+                                setIsSaving(true);
+                                try {
+                                  await fetch(apiUrl, {
+                                    method: 'POST',
+                                    mode: 'no-cors',
+                                    body: JSON.stringify({ action: 'sync_team', project })
+                                  });
+                                  // We can't know for sure if it succeeded due to no-cors, 
+                                  // but we'll refresh after a short delay
+                                  setTimeout(fetchData, 1000);
+                                } catch (e) {
+                                  console.error(e);
+                                } finally {
+                                  setIsSaving(false);
+                                }
+                              }}
+                              className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${
+                                isSynced 
+                                  ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed' 
+                                  : 'bg-white text-black hover:bg-neutral-200 active:scale-95'
+                              }`}
+                            >
+                              {isSynced ? 'Synced' : 'Sync to Filmify'}
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {project.Team && project.Team.length > 0 ? project.Team.map((member: any, mIdx: number) => (
+                              <div key={mIdx} className="px-2 py-1 bg-neutral-800/50 border border-neutral-800 rounded text-[10px] text-neutral-300">
+                                <span className="font-bold text-white">{member.name}</span> • {member.role}
+                              </div>
+                            )) : (
+                              <p className="text-[10px] text-neutral-600 italic">No team assigned</p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {teamProjects.length === 0 && (
                   <div className="col-span-full py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
                     {loading ? (
