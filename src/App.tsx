@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, forwardRef } from 'react';
+import { useState, useEffect, useMemo, forwardRef, Component, ErrorInfo, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, Trash2, Loader2, Cloud, Image as ImageIcon, 
@@ -13,7 +13,69 @@ import { Client, Link } from './types';
 // --- IMPORTANT: REPLACE WITH YOUR DEPLOYED APPS SCRIPT URL ---
 const DEFAULT_API_URL = "YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
 
-export default function App() {
+// --- Error Boundary ---
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center p-10 text-center">
+          <AlertCircle size={48} className="text-red-500 mb-6" />
+          <h1 className="text-2xl font-bold mb-4">Something went wrong</h1>
+          <p className="text-neutral-400 mb-8 max-w-md">
+            The app encountered an error. This usually happens if the connection settings are incorrect.
+          </p>
+          <div className="flex gap-4">
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-6 py-3 bg-white text-black rounded-xl font-bold"
+            >
+              Reload App
+            </button>
+            <button 
+              onClick={() => {
+                localStorage.clear();
+                window.location.reload();
+              }}
+              className="px-6 py-3 bg-neutral-800 text-white rounded-xl font-bold"
+            >
+              Reset All Settings
+            </button>
+          </div>
+          {this.state.error && (
+            <pre className="mt-10 p-4 bg-neutral-900 rounded-lg text-xs text-left overflow-auto max-w-full text-red-400 border border-red-900/30">
+              {this.state.error.toString()}
+            </pre>
+          )}
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default function AppWrapper() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+function App() {
   const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('filmify_api_url') || DEFAULT_API_URL);
   const [teamSpreadsheetId, setTeamSpreadsheetId] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
@@ -79,19 +141,38 @@ export default function App() {
     }
     try {
       const response = await fetch(apiUrl);
-      const data = await response.json();
-      if (data.clients) {
-        setClients(data.clients);
-        setTeamProjects(data.teamProjects || []);
-        setTeamError(data.teamError || null);
-        if (data.config?.teamSpreadsheetId) {
-          setTeamSpreadsheetId(data.config.teamSpreadsheetId);
+      if (!response.ok) throw new Error(`Connection failed (HTTP ${response.status}). Check if the Apps Script URL is correct.`);
+      
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        if (text.includes("<!DOCTYPE html>") || text.includes("<html")) {
+          throw new Error("The URL provided returned a web page instead of data. Make sure you are using the 'Web App URL' from Apps Script, NOT the Google Sheet URL.");
+        }
+        throw new Error("Invalid response format. Please verify your Apps Script deployment.");
+      }
+
+      if (data && typeof data === 'object') {
+        if (data.clients && Array.isArray(data.clients)) {
+          setClients(data.clients);
+          setTeamProjects(Array.isArray(data.teamProjects) ? data.teamProjects : []);
+          setTeamError(data.teamError || null);
+          if (data.config?.teamSpreadsheetId) {
+            setTeamSpreadsheetId(data.config.teamSpreadsheetId);
+          }
+        } else if (Array.isArray(data)) {
+          setClients(data);
+        } else {
+          setClients([]);
         }
       } else {
-        setClients(Array.isArray(data) ? data : []);
+        setClients([]);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to fetch data:", error);
+      setTeamError(error.message || "Failed to connect to Apps Script");
     } finally {
       setLoading(false);
     }
@@ -241,14 +322,48 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-10 lg:p-16">
         <div className="max-w-6xl mx-auto">
-          {(!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) && (
-            <div className="mb-8 p-4 bg-amber-900/20 border border-amber-500/50 rounded-xl flex items-center gap-3 text-amber-200 text-sm">
-              <AlertCircle size={18} />
-              <p>
-                <strong>Configuration Required:</strong> Please go to <strong>Settings</strong> and paste your <strong>Apps Script URL</strong>.
+          {(!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) ? (
+            <div className="mb-8 p-6 bg-amber-900/20 border border-amber-500/50 rounded-2xl flex flex-col gap-4 text-amber-200 shadow-lg">
+              <div className="flex items-center gap-3">
+                <AlertCircle size={24} />
+                <h3 className="text-lg font-bold">Setup Required</h3>
+              </div>
+              <p className="text-sm opacity-90 leading-relaxed">
+                To start using Filmify Data, you need to connect your Google Sheets backend. 
+                Go to <strong>Settings</strong> and paste your <strong>Apps Script Web App URL</strong>.
               </p>
+              <button 
+                onClick={() => setActiveTab('settings')}
+                className="w-fit px-6 py-2 bg-amber-500 text-black rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-amber-400 transition-colors"
+              >
+                Go to Settings
+              </button>
             </div>
-          )}
+          ) : teamError ? (
+            <div className="mb-8 p-6 bg-red-900/20 border border-red-500/50 rounded-2xl flex flex-col gap-4 text-red-200 shadow-lg">
+              <div className="flex items-center gap-3">
+                <AlertCircle size={24} />
+                <h3 className="text-lg font-bold">Connection Error</h3>
+              </div>
+              <p className="text-sm opacity-90 leading-relaxed">
+                {teamError}
+              </p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={fetchData}
+                  className="w-fit px-6 py-2 bg-red-500 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-red-400 transition-colors"
+                >
+                  Retry Connection
+                </button>
+                <button 
+                  onClick={() => setActiveTab('settings')}
+                  className="w-fit px-6 py-2 bg-neutral-800 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-neutral-700 transition-colors"
+                >
+                  Check Settings
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {activeTab === 'projects' ? (
             <>
@@ -424,8 +539,13 @@ export default function App() {
                           localStorage.setItem('filmify_api_url', e.target.value);
                         }}
                         placeholder="https://script.google.com/macros/s/.../exec"
-                        className="input-minimal text-xs font-mono"
+                        className={`input-minimal text-xs font-mono ${apiUrl.includes('docs.google.com/spreadsheets') ? 'border-red-500 text-red-400' : ''}`}
                       />
+                      {apiUrl.includes('docs.google.com/spreadsheets') && (
+                        <p className="text-[10px] text-red-500 font-bold mt-1">
+                          Warning: You pasted a Google Sheet URL. You must use the "Web App URL" from Apps Script.
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Team Management Sheet ID</label>
@@ -467,6 +587,20 @@ export default function App() {
                 </div>
 
                 {/* App Name */}
+                <div className="pt-8 border-t border-neutral-800 flex justify-between items-center">
+                  <button 
+                    onClick={() => {
+                      if (window.confirm("Are you sure you want to reset all settings? This will clear your URLs and preferences.")) {
+                        localStorage.clear();
+                        window.location.reload();
+                      }
+                    }}
+                    className="text-[10px] font-bold text-red-500 uppercase tracking-widest hover:underline"
+                  >
+                    Reset All App Settings
+                  </button>
+                </div>
+
                 <div className="space-y-4 max-w-md">
                   <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Studio Name</label>
                   <input 
