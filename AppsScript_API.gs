@@ -27,6 +27,7 @@ function doGet() {
 
   // Fetch Team Management Data
   let teamProjects = [];
+  let teamError = null;
   try {
     if (TEAM_SPREADSHEET_ID && TEAM_SPREADSHEET_ID !== "PASTE_TEAM_MANAGEMENT_SPREADSHEET_ID_HERE") {
       teamProjects = getTeamData();
@@ -56,22 +57,29 @@ function doGet() {
           });
         }
       });
+    } else {
+      teamError = "TEAM_SPREADSHEET_ID is not set in Apps Script configuration.";
     }
   } catch (e) {
+    teamError = "Error: " + e.toString();
     console.error("Error fetching/syncing team data:", e);
   }
   
   return ContentService.createTextOutput(JSON.stringify({
     clients: clients,
-    teamProjects: teamProjects
+    teamProjects: teamProjects,
+    teamError: teamError
   }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
 function getTeamData() {
   const teamSS = SpreadsheetApp.openById(TEAM_SPREADSHEET_ID);
-  const projectSheet = teamSS.getSheetByName("Projects");
-  const assignmentSheet = teamSS.getSheetByName("Assignments");
+  const sheets = teamSS.getSheets();
+  
+  // Try to find sheets by name or fallback to first/second sheet
+  const projectSheet = teamSS.getSheetByName("Projects") || sheets.find(s => s.getName().toLowerCase().includes("project")) || sheets[0];
+  const assignmentSheet = teamSS.getSheetByName("Assignments") || sheets.find(s => s.getName().toLowerCase().includes("assign")) || sheets[1];
   
   if (!projectSheet) return [];
   
@@ -79,7 +87,7 @@ function getTeamData() {
   const projectHeaders = projectRows.shift();
   
   const assignments = assignmentSheet ? assignmentSheet.getDataRange().getValues() : [];
-  assignments.shift(); // remove headers
+  if (assignments.length > 0) assignments.shift(); // remove headers
   
   return projectRows.map(row => {
     let p = {};
