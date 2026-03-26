@@ -21,6 +21,7 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'projects' | 'team' | 'settings'>('projects');
   const [teamProjects, setTeamProjects] = useState<any[]>([]);
+  const [teamError, setTeamError] = useState<string | null>(null);
   const [appName, setAppName] = useState(() => localStorage.getItem('filmify_app_name') || 'Filmify Studio');
   const [storageOptions, setStorageOptions] = useState<string[]>(() => {
     const saved = localStorage.getItem('filmify_storage_options');
@@ -67,17 +68,20 @@ export default function App() {
   }, [eventTypes]);
 
   const fetchData = async () => {
+    setLoading(true);
     if (!API_URL || API_URL.includes("YOUR_APPS_SCRIPT")) {
+      // Small delay to show the "Not Configured" state clearly
+      await new Promise(r => setTimeout(r, 800));
       setLoading(false);
       return;
     }
-    setLoading(true);
     try {
       const response = await fetch(API_URL);
       const data = await response.json();
       if (data.clients) {
         setClients(data.clients);
         setTeamProjects(data.teamProjects || []);
+        setTeamError(data.teamError || null);
       } else {
         setClients(Array.isArray(data) ? data : []);
       }
@@ -225,6 +229,15 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-10 lg:p-16">
         <div className="max-w-6xl mx-auto">
+          {(!API_URL || API_URL.includes("YOUR_APPS_SCRIPT")) && (
+            <div className="mb-8 p-4 bg-amber-900/20 border border-amber-500/50 rounded-xl flex items-center gap-3 text-amber-200 text-sm">
+              <AlertCircle size={18} />
+              <p>
+                <strong>Configuration Required:</strong> Please update the <code>API_URL</code> in <code>App.tsx</code> with your deployed Apps Script URL.
+              </p>
+            </div>
+          )}
+
           {activeTab === 'projects' ? (
             <>
               <div className="flex items-end justify-between mb-12">
@@ -266,8 +279,17 @@ export default function App() {
                   <h2 className="text-3xl font-bold tracking-tight text-white">Team Management</h2>
                   <p className="text-sm text-neutral-400 font-medium">Projects synced from your Team Management app.</p>
                 </div>
-                <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
-                  {teamProjects.length} Team Projects
+                <div className="flex items-center gap-4">
+                  <button 
+                    onClick={fetchData}
+                    className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-white rounded-xl border border-neutral-800 transition-all text-xs font-bold"
+                  >
+                    <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+                    Refresh Team Data
+                  </button>
+                  <div className="text-sm text-neutral-400 font-semibold bg-neutral-900 px-4 py-2 rounded-full border border-neutral-800 shadow-sm">
+                    {teamProjects.length} Team Projects
+                  </div>
                 </div>
               </div>
 
@@ -276,8 +298,8 @@ export default function App() {
                   <div key={idx} className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 hover:border-neutral-700 transition-all group">
                     <div className="flex justify-between items-start mb-4">
                       <div>
-                        <h3 className="text-lg font-bold text-white">{project.ClientName}</h3>
-                        <p className="text-xs text-neutral-500 font-mono">{project.ProjectID}</p>
+                        <h3 className="text-lg font-bold text-white">{project.ClientName || 'Unnamed Client'}</h3>
+                        <p className="text-xs text-neutral-500 font-mono">{project.ProjectID || 'No ID'}</p>
                       </div>
                       <button 
                         onClick={async () => {
@@ -309,7 +331,7 @@ export default function App() {
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-sm text-neutral-400">
                         <Calendar size={14} />
-                        <span>{project.Date}</span>
+                        <span>{project.Date || 'No date'}</span>
                       </div>
                       <div className="flex items-center gap-2 text-sm text-neutral-400">
                         <MapPin size={14} />
@@ -333,8 +355,29 @@ export default function App() {
                 ))}
                 {teamProjects.length === 0 && (
                   <div className="col-span-full py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
-                    <Loader2 size={32} className="mb-2 animate-spin opacity-20" />
-                    <p className="font-medium">Fetching team data...</p>
+                    {loading ? (
+                      <>
+                        <Loader2 size={32} className="mb-2 animate-spin opacity-20" />
+                        <p className="font-medium">Fetching team data...</p>
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle size={32} className="mb-2 opacity-20" />
+                        <p className="font-medium">{teamError || "No team projects found"}</p>
+                        {teamError && (
+                          <p className="text-[10px] text-neutral-600 mt-2 max-w-xs text-center">
+                            Check if TEAM_SPREADSHEET_ID is correct and you have authorized the script.
+                          </p>
+                        )}
+                        <button 
+                          onClick={fetchData}
+                          className="mt-4 flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-bold transition-all"
+                        >
+                          <RefreshCw size={14} />
+                          Retry Fetch
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
