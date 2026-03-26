@@ -275,8 +275,9 @@ function App() {
   };
 
   const allMergedProjects = useMemo(() => {
-    // Filter out team projects that are already synced to clients
+    // Filter out team projects that are already synced to clients or are in the bin
     const existingIds = new Set(clients.map(c => String(c.ID)));
+    const binIds = new Set(bin.map(c => String(c.ID)));
     
     // Group team projects by ProjectID to handle sub-events
     const groupedTeams: { [key: string]: any[] } = {};
@@ -290,7 +291,8 @@ function App() {
       // Priority: If any event is "Nikah", use that. Otherwise use the first one.
       let mainEvent = events.find(e => String(e.Type).toLowerCase().includes('nikah')) || events[0];
       
-      if (existingIds.has(String(mainEvent.ProjectID))) return null;
+      const id = String(mainEvent.ProjectID);
+      if (existingIds.has(id) || binIds.has(id)) return null;
 
       return {
         ID: mainEvent.ProjectID,
@@ -305,7 +307,15 @@ function App() {
     }).filter(Boolean) as Client[];
 
     return [...clients, ...teamMapped];
-  }, [clients, teamProjects]);
+  }, [clients, teamProjects, bin]);
+
+  const dynamicEventTypes = useMemo(() => {
+    const types = new Set(eventTypes);
+    allMergedProjects.forEach(c => {
+      if (c.Type) types.add(c.Type);
+    });
+    return Array.from(types).sort();
+  }, [eventTypes, allMergedProjects]);
 
   const filteredClients = useMemo(() => {
     let list = allMergedProjects.filter(c => {
@@ -456,7 +466,7 @@ function App() {
                       className="bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-2 text-xs font-bold text-white outline-none focus:ring-2 focus:ring-white/5 appearance-none pr-10"
                     >
                       <option value="All">All Types</option>
-                      {eventTypes.map(type => (
+                      {dynamicEventTypes.map(type => (
                         <option key={type} value={type}>{type}</option>
                       ))}
                     </select>
@@ -521,61 +531,6 @@ function App() {
                   <div className="py-20 flex flex-col items-center justify-center text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
                     <Trash2 size={32} strokeWidth={1.5} className="mb-2 opacity-20" />
                     <p className="font-medium">Bin is empty</p>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : activeTab === 'logs' ? (
-            <>
-              <div className="flex items-end justify-between mb-12">
-                <div className="space-y-1">
-                  <h2 className="text-3xl font-bold tracking-tight text-white">Activity Logs</h2>
-                  <p className="text-sm text-neutral-400 font-medium">Audit trail of all actions performed in the app.</p>
-                </div>
-              </div>
-
-              <div className="bg-neutral-900 border border-neutral-800 rounded-[32px] overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-neutral-800/50 text-neutral-400 uppercase text-[10px] font-bold tracking-widest">
-                      <tr>
-                        <th className="px-6 py-4">Timestamp</th>
-                        <th className="px-6 py-4">Action</th>
-                        <th className="px-6 py-4">Details</th>
-                        <th className="px-6 py-4">User</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-800">
-                      {logs.map((log, idx) => (
-                        <tr key={idx} className="hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4 text-neutral-400 whitespace-nowrap">
-                            {new Date(log.Timestamp).toLocaleString()}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                              log.Action === 'delete' ? 'bg-red-500/10 text-red-400' :
-                              log.Action === 'add' ? 'bg-green-500/10 text-green-400' :
-                              log.Action === 'update' ? 'bg-blue-500/10 text-blue-400' :
-                              'bg-neutral-800 text-neutral-400'
-                            }`}>
-                              {log.Action}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-neutral-200 max-w-md truncate">
-                            {log.Details}
-                          </td>
-                          <td className="px-6 py-4 text-neutral-500">
-                            {log.User}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {logs.length === 0 && (
-                  <div className="py-20 flex flex-col items-center justify-center text-neutral-500">
-                    <BarChart3 size={32} strokeWidth={1.5} className="mb-2 opacity-20" />
-                    <p className="font-medium">No logs recorded yet</p>
                   </div>
                 )}
               </div>
