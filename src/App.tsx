@@ -90,6 +90,8 @@ function App() {
   const [teamError, setTeamError] = useState<string | null>(null);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState(0);
+  const [recentlyDeletedIds, setRecentlyDeletedIds] = useState<string[]>([]);
+  const [recentlySyncedIds, setRecentlySyncedIds] = useState<string[]>([]);
   const [appName, setAppName] = useState(() => localStorage.getItem('filmify_app_name') || 'Filmify Studio');
   const [storageOptions, setStorageOptions] = useState<string[]>(() => {
     const saved = localStorage.getItem('filmify_storage_options');
@@ -135,7 +137,8 @@ function App() {
     localStorage.setItem('filmify_event_types', JSON.stringify(eventTypes));
   }, [eventTypes]);
 
-  const fetchData = async (isBackground = false) => {
+  const fetchData = async (isBackground = false, forceSyncFetch = false) => {
+    if (isSaving && isBackground && !forceSyncFetch) return;
     if (!isBackground) setLoading(true);
     if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
       if (!isBackground) {
@@ -161,12 +164,21 @@ function App() {
 
       if (data && typeof data === 'object') {
         // Only update if we aren't in the middle of a sync or if this is the first load
-        if (Date.now() - lastSyncTime > 6000 || isFirstLoad) {
+        // Increased threshold to 60s to account for slow Apps Script/Google Sheets propagation
+        if (Date.now() - lastSyncTime > 60000 || isFirstLoad || forceSyncFetch) {
           if (data.clients && Array.isArray(data.clients)) {
-            setClients(data.clients);
-            setBin(Array.isArray(data.bin) ? data.bin : []);
+            const newClients = data.clients;
+            const newBin = Array.isArray(data.bin) ? data.bin : [];
+            
+            setClients(newClients);
+            setBin(newBin);
             setTeamProjects(Array.isArray(data.teamProjects) ? data.teamProjects : []);
             setTeamError(data.teamError || null);
+            
+            // Clean up recently tracked IDs if they are now reflected in server data
+            setRecentlyDeletedIds(prev => prev.filter(id => !newBin.some(b => String(b.ID) === id)));
+            setRecentlySyncedIds(prev => prev.filter(id => !newClients.some(c => String(c.ID) === id)));
+
             if (data.config?.teamSpreadsheetId) {
               setTeamSpreadsheetId(data.config.teamSpreadsheetId);
             }
@@ -195,32 +207,39 @@ function App() {
 
   // Sync Data
   const sync = async (action: 'add' | 'update' | 'delete' | 'restore' | 'permanent_delete', client: Client) => {
-    setIsSaving(true);
-    setLastSyncTime(Date.now());
     const previousClients = [...clients];
     const previousBin = [...bin];
+    const idStr = String(client.ID);
 
     // Optimistic UI updates
     if (action === 'add') {
       setClients([client, ...clients]);
     } else if (action === 'update') {
-      if (clients.some(c => String(c.ID) === String(client.ID))) {
-        setClients(clients.map(c => String(c.ID) === String(client.ID) ? client : c));
+      if (clients.some(c => String(c.ID) === idStr)) {
+        setClients(clients.map(c => String(c.ID) === idStr ? client : c));
       } else {
         // If it's a team project being updated/secured, add it to clients
         setClients([client, ...clients]);
+        if ((client as any).isTeamProject) {
+          setRecentlySyncedIds(prev => [...prev, idStr]);
+        }
       }
     } else if (action === 'delete') {
-      setClients(clients.filter(c => String(c.ID) !== String(client.ID)));
+      setClients(clients.filter(c => String(c.ID) !== idStr));
       // Ensure it goes to bin immediately
       const binItem = { ...client, DeletedAt: new Date().toISOString() };
-      setBin(prev => [binItem as any, ...prev.filter(item => String(item.ID) !== String(client.ID))]);
+      setBin(prev => [binItem as any, ...prev.filter(item => String(item.ID) !== idStr)]);
+      setRecentlyDeletedIds(prev => [...prev, idStr]);
     } else if (action === 'restore') {
-      setBin(bin.filter(c => String(c.ID) !== String(client.ID)));
+      setBin(bin.filter(c => String(c.ID) !== idStr));
       setClients([client, ...clients]);
+      setRecentlySyncedIds(prev => [...prev, idStr]);
     } else if (action === 'permanent_delete') {
-      setBin(bin.filter(c => String(c.ID) !== String(client.ID)));
+      setBin(bin.filter(c => String(c.ID) !== idStr));
     }
+
+    setIsSaving(true);
+    setLastSyncTime(Date.now());
 
     if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
       setTimeout(() => setIsSaving(false), 500);
@@ -263,14 +282,16 @@ function App() {
       
       // Wait longer to ensure backend has finished processing
       setTimeout(() => {
-        fetchData(true);
-      }, 4000);
+        fetchData(true, true);
+      }, 15000);
     } catch (error) {
       console.error("Sync failed:", error);
       setClients(previousClients);
       setBin(previousBin);
+      setRecentlyDeletedIds(prev => prev.filter(id => id !== idStr));
+      setRecentlySyncedIds(prev => prev.filter(id => id !== idStr));
     } finally {
-      setTimeout(() => setIsSaving(false), 6000);
+      setTimeout(() => setIsSaving(false), 18000);
     }
   };
 
@@ -278,6 +299,7 @@ function App() {
     // Filter out team projects that are already synced to clients or are in the bin
     const existingIds = new Set(clients.map(c => String(c.ID)));
     const binIds = new Set(bin.map(c => String(c.ID)));
+    const recentIds = new Set([...recentlyDeletedIds, ...recentlySyncedIds]);
     
     // Group team projects by ProjectID to handle sub-events
     const groupedTeams: { [key: string]: any[] } = {};
@@ -292,7 +314,7 @@ function App() {
       let mainEvent = events.find(e => String(e.Type).toLowerCase().includes('nikah')) || events[0];
       
       const id = String(mainEvent.ProjectID);
-      if (existingIds.has(id) || binIds.has(id)) return null;
+      if (existingIds.has(id) || binIds.has(id) || recentIds.has(id)) return null;
 
       return {
         ID: mainEvent.ProjectID,
@@ -307,7 +329,7 @@ function App() {
     }).filter(Boolean) as Client[];
 
     return [...clients, ...teamMapped];
-  }, [clients, teamProjects, bin]);
+  }, [clients, teamProjects, bin, recentlyDeletedIds, recentlySyncedIds]);
 
   const dynamicEventTypes = useMemo(() => {
     const types = new Set(eventTypes);
