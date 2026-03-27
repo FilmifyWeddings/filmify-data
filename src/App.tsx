@@ -78,20 +78,30 @@ export default function AppWrapper() {
 function App() {
   const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('filmify_api_url') || DEFAULT_API_URL);
   const [teamSpreadsheetId, setTeamSpreadsheetId] = useState('');
-  const [clients, setClients] = useState<Client[]>([]);
+  const [clients, setClients] = useState<Client[]>(() => {
+    const saved = localStorage.getItem('filmify_clients_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [loading, setLoading] = useState(true);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'projects' | 'bin' | 'settings'>('projects');
-  const [teamProjects, setTeamProjects] = useState<any[]>([]);
-  const [bin, setBin] = useState<Client[]>([]);
+  const [teamProjects, setTeamProjects] = useState<any[]>(() => {
+    const saved = localStorage.getItem('filmify_team_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [bin, setBin] = useState<Client[]>(() => {
+    const saved = localStorage.getItem('filmify_bin_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [filterType, setFilterType] = useState<string>('All');
   const [teamError, setTeamError] = useState<string | null>(null);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState(0);
   const [recentlyDeletedIds, setRecentlyDeletedIds] = useState<string[]>([]);
   const [recentlySyncedIds, setRecentlySyncedIds] = useState<string[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [appName, setAppName] = useState(() => localStorage.getItem('filmify_app_name') || 'Filmify Studio');
   const [storageOptions, setStorageOptions] = useState<string[]>(() => {
     const saved = localStorage.getItem('filmify_storage_options');
@@ -137,14 +147,30 @@ function App() {
     localStorage.setItem('filmify_event_types', JSON.stringify(eventTypes));
   }, [eventTypes]);
 
+  // Cache data to localStorage
+  useEffect(() => {
+    localStorage.setItem('filmify_clients_cache', JSON.stringify(clients));
+  }, [clients]);
+
+  useEffect(() => {
+    localStorage.setItem('filmify_bin_cache', JSON.stringify(bin));
+  }, [bin]);
+
+  useEffect(() => {
+    localStorage.setItem('filmify_team_cache', JSON.stringify(teamProjects));
+  }, [teamProjects]);
+
   const fetchData = async (isBackground = false, forceSyncFetch = false) => {
     if (isSaving && isBackground && !forceSyncFetch) return;
     if (!isBackground) setLoading(true);
+    if (forceSyncFetch) setIsSyncing(true);
+    
     if (!apiUrl || apiUrl.includes("YOUR_APPS_SCRIPT")) {
       if (!isBackground) {
         await new Promise(r => setTimeout(r, 800));
         setLoading(false);
       }
+      setIsSyncing(false);
       return;
     }
     try {
@@ -178,7 +204,11 @@ function App() {
                 recentlyDeletedIds.includes(String(b.ID)) && 
                 !newBin.some(nb => String(nb.ID) === String(b.ID))
               );
-              return [...newBin, ...pendingBinItems];
+              
+              // Also filter out items that were recently restored but are still in the server's bin
+              const filteredNewBin = newBin.filter(nb => !recentlySyncedIds.includes(String(nb.ID)));
+              
+              return [...filteredNewBin, ...pendingBinItems];
             });
 
             setTeamProjects(Array.isArray(data.teamProjects) ? data.teamProjects : []);
@@ -202,6 +232,7 @@ function App() {
     } finally {
       if (!isBackground) setLoading(false);
       setIsFirstLoad(false);
+      setIsSyncing(false);
     }
   };
 
@@ -300,7 +331,10 @@ function App() {
       setRecentlyDeletedIds(prev => prev.filter(id => id !== idStr));
       setRecentlySyncedIds(prev => prev.filter(id => id !== idStr));
     } finally {
-      setTimeout(() => setIsSaving(false), 18000);
+      setTimeout(() => {
+        setIsSaving(false);
+        setIsSyncing(false);
+      }, 18000);
     }
   };
 
@@ -376,6 +410,23 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-[#fafafa] font-sans flex flex-col">
+      {/* Sync Status Overlay */}
+      <AnimatePresence>
+        {(isSaving || isSyncing) && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-3 px-6 py-3 bg-neutral-900/90 backdrop-blur-md border border-neutral-800 rounded-full shadow-2xl"
+          >
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+            <span className="text-[10px] font-bold text-white tracking-widest uppercase">
+              {isSaving ? 'Syncing with Google Sheets...' : 'Updating Data...'}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="h-24 border-b border-[#262626] bg-[#0a0a0a]/80 backdrop-blur-md sticky top-0 z-50 px-6 sm:px-10 lg:px-16 flex items-center justify-between gap-4">
         {/* Left: App Name */}
@@ -639,6 +690,17 @@ function App() {
                           Save
                         </button>
                       </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Data Management</label>
+                      <button 
+                        onClick={() => fetchData(false, true)}
+                        disabled={isSyncing}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 rounded-xl text-xs font-bold text-white transition-all border border-neutral-700"
+                      >
+                        <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                        {isSyncing ? 'Refreshing...' : 'Force Refresh Data'}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1117,7 +1179,11 @@ const ProjectCard = forwardRef<HTMLDivElement, {
                 <span>Restore</span>
               </button>
               <button 
-                onClick={() => { if(window.confirm("Permanently delete this project? This cannot be undone.")) onPermanentDelete?.() }}
+                onClick={() => {
+                  if (confirm("Permanently delete this project? This cannot be undone.")) {
+                    onPermanentDelete?.();
+                  }
+                }}
                 className="p-3 rounded-xl border border-neutral-800 text-neutral-400 hover:text-red-500 hover:border-red-500 transition-all bg-neutral-900 shadow-sm"
               >
                 <Trash2 size={20} />
@@ -1133,7 +1199,11 @@ const ProjectCard = forwardRef<HTMLDivElement, {
                 <span>{client.Secure ? 'Secured' : 'Secure'}</span>
               </button>
               <button 
-                onClick={() => { if(window.confirm("Move to bin?")) onDelete?.() }}
+                onClick={() => {
+                  if (confirm("Move to bin?")) {
+                    onDelete?.();
+                  }
+                }}
                 className="p-3 rounded-xl border border-neutral-800 text-neutral-400 hover:text-red-500 hover:border-red-500 transition-all bg-neutral-900 shadow-sm"
               >
                 <Trash2 size={20} />
