@@ -202,8 +202,9 @@ function doPost(e) {
   } 
   else if (action === "update") {
     const rows = mainSheet.getDataRange().getValues();
+    const targetId = String(params.id);
     for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] == params.id) {
+      if (String(rows[i][0]) === targetId) {
         mainSheet.getRange(i + 1, 1, 1, 7).setValues([[
           params.id, params.name, params.date, params.type, params.storage, params.secure, JSON.stringify(params.links)
         ]]);
@@ -274,7 +275,7 @@ function doPost(e) {
     if (!exists) {
       mainSheet.appendRow([
         targetId, params.name, params.date, params.type || "Wedding", 
-        params.storage || "HDD 01", false, JSON.stringify({ cloud: [], photos: [], videos: [] })
+        params.storage || "HDD 01", params.secure || false, JSON.stringify({ cloud: [], photos: [], videos: [] })
       ]);
       logAction("SYNC_TEAM", `Synced team project: ${params.name}`);
     }
