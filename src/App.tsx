@@ -247,35 +247,41 @@ function App() {
 
   // Sync Data
   const sync = async (action: 'add' | 'update' | 'delete' | 'restore' | 'permanent_delete', client: Client) => {
-    const previousClients = [...clients];
-    const previousBin = [...bin];
     const idStr = String(client.ID);
+    const isTeam = (client as any).isTeamProject;
 
-    // Optimistic UI updates
+    // 1. Instant Local Update (Optimistic)
     if (action === 'add') {
-      setClients([client, ...clients]);
+      setClients(prev => [client, ...prev]);
     } else if (action === 'update') {
-      if (clients.some(c => String(c.ID) === idStr)) {
-        setClients(clients.map(c => String(c.ID) === idStr ? client : c));
-      } else {
-        // If it's a team project being updated/secured, add it to clients
-        setClients([client, ...clients]);
-        if ((client as any).isTeamProject) {
-          setRecentlySyncedIds(prev => [...prev, idStr]);
+      setClients(prev => {
+        const exists = prev.some(c => String(c.ID) === idStr);
+        if (exists) {
+          return prev.map(c => String(c.ID) === idStr ? client : c);
+        } else if (isTeam) {
+          // If it's a team project being updated/secured, add it to clients immediately
+          return [{ ...client, isTeamProject: false }, ...prev];
         }
+        return prev;
+      });
+      if (isTeam) {
+        setRecentlySyncedIds(prev => [...prev, idStr]);
+        setTeamProjects(prev => prev.filter(p => String(p.ProjectID) !== idStr));
       }
     } else if (action === 'delete') {
-      setClients(clients.filter(c => String(c.ID) !== idStr));
-      // Ensure it goes to bin immediately
+      setClients(prev => prev.filter(c => String(c.ID) !== idStr));
       const binItem = { ...client, DeletedAt: new Date().toISOString() };
       setBin(prev => [binItem as any, ...prev.filter(item => String(item.ID) !== idStr)]);
       setRecentlyDeletedIds(prev => [...prev, idStr]);
+      if (isTeam) {
+        setTeamProjects(prev => prev.filter(p => String(p.ProjectID) !== idStr));
+      }
     } else if (action === 'restore') {
-      setBin(bin.filter(c => String(c.ID) !== idStr));
-      setClients([client, ...clients]);
+      setBin(prev => prev.filter(c => String(c.ID) !== idStr));
+      setClients(prev => [client, ...prev]);
       setRecentlySyncedIds(prev => [...prev, idStr]);
     } else if (action === 'permanent_delete') {
-      setBin(bin.filter(c => String(c.ID) !== idStr));
+      setBin(prev => prev.filter(c => String(c.ID) !== idStr));
     }
 
     setIsSaving(true);
@@ -287,17 +293,6 @@ function App() {
     }
 
     try {
-      // Optimistic: If it's a team project, we treat it as synced locally immediately
-      const isTeam = (client as any).isTeamProject;
-      if (isTeam) {
-        setClients(prev => {
-          const exists = prev.some(c => c.ID === client.ID);
-          if (exists) return prev;
-          return [...prev, { ...client, isTeamProject: false } as Client];
-        });
-        setTeamProjects(prev => prev.filter(p => p.ProjectID !== client.ID));
-      }
-
       // If it's a team project not yet in clients, we need to sync it first
       if (isTeam && (action === 'update' || action === 'delete')) {
         await fetch(apiUrl, {
@@ -310,7 +305,8 @@ function App() {
             name: client.Name,
             date: client.Date,
             type: client.Type,
-            storage: client.Storage || 'HDD 01'
+            storage: client.Storage || 'HDD 01',
+            secure: client.Secure || false
           })
         });
       }
@@ -333,21 +329,16 @@ function App() {
         body: JSON.stringify(payload)
       });
       
-      // Wait longer to ensure backend has finished processing
+      // Refresh data in background silently after a short delay
+      // We don't force a sync fetch here to avoid overwriting our optimistic local state with stale server data
       setTimeout(() => {
-        fetchData(true, true);
-      }, 15000);
+        fetchData(false, true); 
+      }, 2000);
     } catch (error) {
       console.error("Sync failed:", error);
-      setClients(previousClients);
-      setBin(previousBin);
-      setRecentlyDeletedIds(prev => prev.filter(id => id !== idStr));
-      setRecentlySyncedIds(prev => prev.filter(id => id !== idStr));
     } finally {
-      setTimeout(() => {
-        setIsSaving(false);
-        setIsSyncing(false);
-      }, 18000);
+      setIsSaving(false);
+      setIsSyncing(false);
     }
   };
 
