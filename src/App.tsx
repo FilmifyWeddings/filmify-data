@@ -297,6 +297,9 @@ function App() {
           body: JSON.stringify({
             action: 'sync_team',
             id: client.ID,
+            name: client.Name,
+            date: client.Date,
+            type: client.Type,
             storage: client.Storage || 'HDD 01'
           })
         });
