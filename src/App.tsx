@@ -287,8 +287,18 @@ function App() {
     }
 
     try {
-      // If it's a team project not yet in clients, we need to sync it first
+      // Optimistic: If it's a team project, we treat it as synced locally immediately
       const isTeam = (client as any).isTeamProject;
+      if (isTeam) {
+        setClients(prev => {
+          const exists = prev.some(c => c.ID === client.ID);
+          if (exists) return prev;
+          return [...prev, { ...client, isTeamProject: false } as Client];
+        });
+        setTeamProjects(prev => prev.filter(p => p.ProjectID !== client.ID));
+      }
+
+      // If it's a team project not yet in clients, we need to sync it first
       if (isTeam && (action === 'update' || action === 'delete')) {
         await fetch(apiUrl, {
           method: 'POST',
