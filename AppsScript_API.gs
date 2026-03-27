@@ -261,11 +261,23 @@ function doPost(e) {
     }
   }
   else if (action === "sync_team") {
-    mainSheet.appendRow([
-      params.id, params.name, params.date, params.type || "Wedding", 
-      params.storage || "HDD 01", false, JSON.stringify({ cloud: [], photos: [], videos: [] })
-    ]);
-    logAction("SYNC_TEAM", `Synced team project: ${params.name}`);
+    const rows = mainSheet.getDataRange().getValues();
+    const targetId = String(params.id);
+    let exists = false;
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === targetId) {
+        exists = true;
+        break;
+      }
+    }
+    
+    if (!exists) {
+      mainSheet.appendRow([
+        targetId, params.name, params.date, params.type || "Wedding", 
+        params.storage || "HDD 01", false, JSON.stringify({ cloud: [], photos: [], videos: [] })
+      ]);
+      logAction("SYNC_TEAM", `Synced team project: ${params.name}`);
+    }
   }
   
   return ContentService.createTextOutput(JSON.stringify({status: "success"})).setMimeType(ContentService.MimeType.JSON);
