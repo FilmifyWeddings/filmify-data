@@ -171,7 +171,16 @@ function App() {
             const newBin = Array.isArray(data.bin) ? data.bin : [];
             
             setClients(newClients);
-            setBin(newBin);
+            
+            // Reconcile Bin: Keep optimistic items that aren't in the server's bin yet
+            setBin(prev => {
+              const pendingBinItems = prev.filter(b => 
+                recentlyDeletedIds.includes(String(b.ID)) && 
+                !newBin.some(nb => String(nb.ID) === String(b.ID))
+              );
+              return [...newBin, ...pendingBinItems];
+            });
+
             setTeamProjects(Array.isArray(data.teamProjects) ? data.teamProjects : []);
             setTeamError(data.teamError || null);
             
