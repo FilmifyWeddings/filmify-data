@@ -332,7 +332,7 @@ function App() {
       // Refresh data in background silently after a short delay
       // We don't force a sync fetch here to avoid overwriting our optimistic local state with stale server data
       setTimeout(() => {
-        fetchData(false, true); 
+        fetchData(true, true); 
       }, 2000);
     } catch (error) {
       console.error("Sync failed:", error);
