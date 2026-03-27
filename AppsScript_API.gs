@@ -214,24 +214,38 @@ function doPost(e) {
   } 
   else if (action === "delete") {
     const rows = mainSheet.getDataRange().getValues();
+    const targetId = String(params.id);
+    let foundInMain = false;
     for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] == params.id) {
-        const rowData = rows[i];
+      if (String(rows[i][0]) === targetId) {
+        const rowData = rows[i].slice(0, 7);
         binSheet.appendRow([...rowData, new Date()]);
         mainSheet.deleteRow(i + 1);
+        foundInMain = true;
         logAction("DELETE", `Moved to Bin: ${params.name} (${params.id})`);
         break;
       }
     }
+    // Fallback: Agar card Clients sheet mein nahi mila, toh params se direct Bin mein add karein
+    if (!foundInMain) {
+      binSheet.appendRow([
+        targetId, params.name || "Team Project", params.date || "", params.type || "Wedding", 
+        params.storage || "HDD 01", params.secure || false, 
+        JSON.stringify(params.links || { cloud: [], photos: [], videos: [] }), 
+        new Date()
+      ]);
+      logAction("DELETE", `Moved to Bin directly (Team Card): ${params.name}`);
+    }
   }
   else if (action === "restore") {
     const rows = binSheet.getDataRange().getValues();
+    const targetId = String(params.id);
     for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] == params.id) {
+      if (String(rows[i][0]) === targetId) {
         const rowData = rows[i].slice(0, 7);
         mainSheet.appendRow(rowData);
         binSheet.deleteRow(i + 1);
-        logAction("RESTORE", `Restored from Bin: ${params.id}`);
+        logAction("RESTORE", `Restored from Bin: ${targetId}`);
         break;
       }
     }
@@ -247,12 +261,11 @@ function doPost(e) {
     }
   }
   else if (action === "sync_team") {
-    const project = params.project;
     mainSheet.appendRow([
-      project.ProjectID, project.ClientName, project.Date, project.Type || "Wedding", 
+      params.id, params.name, params.date, params.type || "Wedding", 
       params.storage || "HDD 01", false, JSON.stringify({ cloud: [], photos: [], videos: [] })
     ]);
-    logAction("SYNC_TEAM", `Synced team project: ${project.ClientName}`);
+    logAction("SYNC_TEAM", `Synced team project: ${params.name}`);
   }
   
   return ContentService.createTextOutput(JSON.stringify({status: "success"})).setMimeType(ContentService.MimeType.JSON);
