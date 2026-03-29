@@ -103,6 +103,7 @@ function App() {
   const [recentlySyncedIds, setRecentlySyncedIds] = useState<string[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [appName, setAppName] = useState(() => localStorage.getItem('app_reated_name') || 'App Reated Studio');
+  const [isSyncingSettings, setIsSyncingSettings] = useState(false);
   const [storageOptions, setStorageOptions] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('app_reated_storage_options');
@@ -213,6 +214,20 @@ function App() {
       }
 
       if (data && typeof data === 'object') {
+        // Sync Global Settings from Backend
+        if (data.settings) {
+          if (data.settings.app_name) setAppName(data.settings.app_name);
+          if (data.settings.storage_options) {
+            try { setStorageOptions(JSON.parse(data.settings.storage_options)); } catch(e) {}
+          }
+          if (data.settings.delivery_link_types) {
+            try { setDeliveryLinkTypes(JSON.parse(data.settings.delivery_link_types)); } catch(e) {}
+          }
+          if (data.settings.event_types) {
+            try { setEventTypes(JSON.parse(data.settings.event_types)); } catch(e) {}
+          }
+        }
+
         if (Date.now() - lastSyncTime > 60000 || isFirstLoad || forceSyncFetch) {
           if (data.clients && Array.isArray(data.clients)) {
             const newClients = data.clients.map((c: any) => {
@@ -251,14 +266,31 @@ function App() {
           }
         }
       }
-    }
- catch (error: any) {
+    } catch (error: any) {
       console.error("Failed to fetch data:", error);
       if (!isBackground) setTeamError(error.message || "Failed to connect to Apps Script");
     } finally {
       if (!isBackground) setLoading(false);
       setIsFirstLoad(false);
       setIsSyncing(false);
+    }
+  };
+
+  const syncSettings = async (settings: any) => {
+    if (!apiUrl || !apiUrl.startsWith('http')) return;
+    setIsSyncingSettings(true);
+    try {
+      await fetch(apiUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_settings', settings })
+      });
+      // Since no-cors doesn't give response, we assume success or wait for next fetch
+    } catch (error) {
+      console.error('Settings sync error:', error);
+    } finally {
+      setIsSyncingSettings(false);
     }
   };
 
@@ -774,12 +806,23 @@ function App() {
                 </div>
 
                 <div className="space-y-4 max-w-md">
-                  <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Studio Name</label>
-                  <input 
-                    value={appName}
-                    onChange={(e) => setAppName(e.target.value)}
-                    className="input-minimal text-xl font-bold"
-                  />
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Studio Name</label>
+                    {isSyncingSettings && <span className="text-[8px] text-blue-400 animate-pulse">SYNCING...</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <input 
+                      value={appName}
+                      onChange={(e) => setAppName(e.target.value)}
+                      className="input-minimal text-xl font-bold flex-1"
+                    />
+                    <button 
+                      onClick={() => syncSettings({ app_name: appName })}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-bold transition-all border border-white/10"
+                    >
+                      SYNC
+                    </button>
+                  </div>
                 </div>
 
                 {/* Google Sheets Style List Management */}
@@ -788,6 +831,12 @@ function App() {
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Storage Options</label>
+                      <button 
+                        onClick={() => syncSettings({ storage_options: storageOptions })}
+                        className="text-[9px] font-bold text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        SYNC TO ALL DEVICES
+                      </button>
                     </div>
                     
                     <div className="flex gap-3">
@@ -865,6 +914,12 @@ function App() {
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Event Types</label>
+                      <button 
+                        onClick={() => syncSettings({ event_types: eventTypes })}
+                        className="text-[9px] font-bold text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        SYNC TO ALL DEVICES
+                      </button>
                     </div>
 
                     <div className="flex gap-3">
@@ -943,7 +998,15 @@ function App() {
                 <div className="space-y-10">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div>
-                      <h3 className="text-xl font-bold text-white tracking-tight">Delivery & Backup Sections</h3>
+                      <div className="flex items-center gap-4">
+                        <h3 className="text-xl font-bold text-white tracking-tight">Delivery & Backup Sections</h3>
+                        <button 
+                          onClick={() => syncSettings({ delivery_link_types: deliveryLinkTypes })}
+                          className="text-[9px] font-bold text-blue-400 hover:text-blue-300 transition-colors uppercase tracking-widest"
+                        >
+                          Sync to All Devices
+                        </button>
+                      </div>
                       <p className="text-xs text-neutral-500 mt-1 uppercase tracking-widest font-bold opacity-60">Define the structure for all projects</p>
                     </div>
                     <button 
