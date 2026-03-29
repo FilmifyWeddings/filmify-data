@@ -32,6 +32,7 @@ function doGet() {
   const mainSheet = getOrCreateSheet("Clients", ["ID", "Name", "Date", "Type", "Storage", "Secure", "Links"]);
   const binSheet = getOrCreateSheet("Bin", ["ID", "Name", "Date", "Type", "Storage", "Secure", "Links", "DeletedAt"]);
   const logSheet = getOrCreateSheet("Logs", ["Timestamp", "Action", "Details", "User"]);
+  const settingsSheet = getOrCreateSheet("Settings", ["Key", "Value"]);
 
   const getSheetData = (sheet) => {
     const rows = sheet.getDataRange().getValues();
@@ -51,6 +52,12 @@ function doGet() {
   const clients = getSheetData(mainSheet);
   const bin = getSheetData(binSheet);
   const logs = logSheet.getDataRange().getValues().slice(1).reverse().slice(0, 100); // Last 100 logs
+  
+  const settingsRows = settingsSheet.getDataRange().getValues();
+  const settings = {};
+  settingsRows.slice(1).forEach(row => {
+    if (row[0]) settings[row[0]] = row[1];
+  });
 
   // Fetch Team Management Data
   let teamProjects = [];
@@ -71,6 +78,7 @@ function doGet() {
     clients: clients,
     bin: bin,
     logs: logs,
+    settings: settings,
     teamProjects: teamProjects,
     teamError: teamError,
     config: { teamSpreadsheetId: teamId }
@@ -183,6 +191,7 @@ function doPost(e) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const mainSheet = getOrCreateSheet("Clients", ["ID", "Name", "Date", "Type", "Storage", "Secure", "Links"]);
   const binSheet = getOrCreateSheet("Bin", ["ID", "Name", "Date", "Type", "Storage", "Secure", "Links", "DeletedAt"]);
+  const settingsSheet = getOrCreateSheet("Settings", ["Key", "Value"]);
   const action = params.action;
   
   if (action === "update_config") {
@@ -192,6 +201,28 @@ function doPost(e) {
     }
     return ContentService.createTextOutput(JSON.stringify({status: "success"})).setMimeType(ContentService.MimeType.JSON);
   } 
+  
+  if (action === "update_settings") {
+    const settings = params.settings; // { key: value }
+    const rows = settingsSheet.getDataRange().getValues();
+    
+    for (const key in settings) {
+      let found = false;
+      const val = typeof settings[key] === 'string' ? settings[key] : JSON.stringify(settings[key]);
+      for (let i = 1; i < rows.length; i++) {
+        if (String(rows[i][0]) === key) {
+          settingsSheet.getRange(i + 1, 2).setValue(val);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        settingsSheet.appendRow([key, val]);
+      }
+    }
+    logAction("SETTINGS_UPDATE", "Updated global settings");
+    return ContentService.createTextOutput(JSON.stringify({status: "success"})).setMimeType(ContentService.MimeType.JSON);
+  }
   
   if (action === "add") {
     mainSheet.appendRow([
