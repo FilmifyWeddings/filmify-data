@@ -1,4 +1,4 @@
-// Google Apps Script API for Filmify Studio
+// Google Apps Script API for App Reated Studio
 // 1. Create a Google Sheet with headers: ID, Name, Date, Type, Storage, Secure, Links
 // 2. Open Extensions > Apps Script and paste this code.
 // 3. Deploy as Web App (Execute as: Me, Access: Anyone).
